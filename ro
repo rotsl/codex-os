@@ -1,0 +1,1054 @@
+#!/usr/bin/env python3
+"""Thin Codex wrapper: project-aware prompting, bounded error recovery, local history/memory updates."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+PROJECT_TYPES = {"frontend", "backend", "writing", "general"}
+MAX_RETRIES = 2
+GLOBAL_CODEX_DIR = Path.home() / ".codex"
+GLOBAL_SYSTEM_DIR = GLOBAL_CODEX_DIR / "system"
+GLOBAL_MEMORY_PATH = GLOBAL_CODEX_DIR / "global_memory.md"
+GLOBAL_SYSTEM_PLUGINS_DIR = GLOBAL_SYSTEM_DIR / "plugins"
+PLUGIN_REGISTRY_PATH = GLOBAL_SYSTEM_DIR / "plugin-registry.json"
+REMOTE_PREFIXES = ("http://", "https://", "ssh://", "git@", "file://")
+OPTIONAL_PLUGIN_METADATA = ("README.md", "LICENSE", "metadata.json", "plugin.json")
+
+CODEX_EXECUTABLE: str | None = None
+
+ERROR_PATTERNS = [
+    re.compile(r"traceback", re.IGNORECASE),
+    re.compile(r"syntaxerror|typeerror|referenceerror|nameerror", re.IGNORECASE),
+    re.compile(r"failed command|command failed|exit code", re.IGNORECASE),
+    re.compile(r"test(s)?\s+failed|failing tests|assertionerror", re.IGNORECASE),
+    re.compile(r"\berror:\b", re.IGNORECASE),
+]
+
+USER_INPUT_PATTERNS = [
+    re.compile(r"requires user input", re.IGNORECASE),
+    re.compile(r"please provide", re.IGNORECASE),
+    re.compile(r"which (option|one)", re.IGNORECASE),
+    re.compile(r"confirm", re.IGNORECASE),
+]
+
+PROJECT_PROMPT_APPEND = {
+    "frontend": "Focus on UI, components, and user experience. Keep code modular.",
+    "backend": "Focus on APIs, data flow, and reliability. Ensure correctness and structure.",
+    "writing": "Focus on clarity, readability, and human tone.",
+    "general": "",
+}
+
+
+DEFAULT_PROJECT_AGENTS = """# Project Codex Loader
+
+This project uses the global Codex-OS system from `~/.codex/system`.
+
+## Local Notes
+- Add only project-specific constraints here.
+- Keep global behavior in `~/.codex/AGENTS.md` and system files.
+"""
+
+DEFAULT_MEMORY_CONTEXT = """# Persistent Context Memory
+
+## Current State
+- project bootstrapped automatically by `ro`
+
+## Active Constraints
+- none yet
+
+## Current Goals
+- none yet
+
+## In Progress
+- none
+
+## Still Relevant
+- keep updates concise and durable
+"""
+
+DEFAULT_MEMORY_DECISIONS = """# Persistent Decision Memory
+
+## Durable Decisions
+- none yet
+
+## Reusable Patterns
+- none yet
+
+## Long-Term Constraints
+- none yet
+"""
+
+
+def resolve_codex_executable() -> str:
+    global CODEX_EXECUTABLE
+    if CODEX_EXECUTABLE:
+        return CODEX_EXECUTABLE
+
+    env_override = os.environ.get("RO_CODEX_BIN") or os.environ.get("CODEX_BIN")
+    if env_override:
+        candidate = Path(env_override).expanduser()
+        if candidate.is_file():
+            CODEX_EXECUTABLE = str(candidate)
+            return CODEX_EXECUTABLE
+
+    which = shutil.which("codex")
+    if which:
+        CODEX_EXECUTABLE = which
+        return CODEX_EXECUTABLE
+
+    fallback_candidates = [
+        Path.home() / ".local" / "bin" / "codex",
+        Path.home() / ".codex" / "bin" / "codex",
+        Path("/usr/local/bin/codex"),
+        Path("/opt/homebrew/bin/codex"),
+    ]
+    for candidate in fallback_candidates:
+        if candidate.is_file():
+            CODEX_EXECUTABLE = str(candidate)
+            return CODEX_EXECUTABLE
+
+    vscode_root = Path.home() / ".vscode" / "extensions"
+    vscode_hits: list[Path] = []
+    if vscode_root.is_dir():
+        patterns = [
+            "openai.chatgpt-*/bin/*/codex",
+            "openai.chatgpt-*/bin/codex",
+        ]
+        for pattern in patterns:
+            vscode_hits.extend(vscode_root.glob(pattern))
+
+    vscode_hits = [p for p in vscode_hits if p.is_file()]
+    if vscode_hits:
+        newest = max(vscode_hits, key=lambda p: p.stat().st_mtime)
+        CODEX_EXECUTABLE = str(newest)
+        return CODEX_EXECUTABLE
+
+    raise SystemExit(
+        "Codex CLI binary not found. Install Codex CLI or set RO_CODEX_BIN=/absolute/path/to/codex."
+    )
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# Keep summaries deterministic and compact; no raw dumps.
+def summarize_text(text: str, max_lines: int = 6, max_chars: int = 700) -> str:
+    lines: list[str] = []
+    for raw in text.splitlines():
+        ln = re.sub(r"\s+", " ", raw.strip())
+        if not ln:
+            continue
+        if ln.startswith("#"):
+            continue
+        if ln.lower().startswith("updated:"):
+            continue
+        lines.append(ln)
+
+    if not lines:
+        return ""
+
+    out: list[str] = []
+    total = 0
+    for ln in lines:
+        item = ln[:140]
+        if len(item) > 2 and not item.startswith("-"):
+            item = f"- {item}"
+        if total + len(item) + 1 > max_chars:
+            break
+        out.append(item)
+        total += len(item) + 1
+        if len(out) >= max_lines:
+            break
+
+    return "\n".join(out)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="ro",
+        description="Codex wrapper with project-aware prompting, optional cross-context/share, plugin loading, and bounded recovery.",
+    )
+    parser.add_argument(
+        "parts",
+        nargs="*",
+        help='Examples: ro "task" | ro build "task" | ro write "task" | ro analyze "task" | ro plugin list',
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print resolved execution plan without running codex")
+    parser.add_argument("--context", help="Optional local project/path for on-demand context summary")
+    parser.add_argument("--share", help="Optional local project/path to create isolated shared memory from")
+    parser.add_argument(
+        "--plugin",
+        action="append",
+        default=[],
+        help="Optional plugin name to load from plugins/<name>/SKILL.md (repeatable)",
+    )
+    return parser.parse_args()
+
+
+def find_project_root(start: Path) -> Path:
+    here = start.resolve()
+    for candidate in [here, *here.parents]:
+        if (candidate / "AGENTS.md").is_file():
+            return candidate
+
+    git_proc = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=here,
+        text=True,
+        capture_output=True,
+    )
+    if git_proc.returncode == 0:
+        git_root = Path(git_proc.stdout.strip()).expanduser()
+        if git_root.exists():
+            return git_root.resolve()
+
+    return here
+
+
+def ensure_project_bootstrap(root: Path) -> None:
+    agents_file = root / "AGENTS.md"
+    if not agents_file.exists():
+        agents_file.write_text(DEFAULT_PROJECT_AGENTS.rstrip() + "\n", encoding="utf-8")
+
+    memory_dir = root / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    context_file = memory_dir / "context.md"
+    if not context_file.exists():
+        context_file.write_text(DEFAULT_MEMORY_CONTEXT.rstrip() + "\n", encoding="utf-8")
+
+    decisions_file = memory_dir / "decisions.md"
+    if not decisions_file.exists():
+        decisions_file.write_text(DEFAULT_MEMORY_DECISIONS.rstrip() + "\n", encoding="utf-8")
+
+
+def reject_remote_reference(ref: str) -> None:
+    lower = ref.strip().lower()
+    if lower.startswith(("http://", "https://", "ssh://", "git@")):
+        raise SystemExit("Remote repositories are not auto-loaded for context/share. Pass a local path/repo instead.")
+
+
+def resolve_local_reference(ref: str, current_root: Path) -> Path:
+    reject_remote_reference(ref)
+
+    raw = Path(ref).expanduser()
+    candidates: list[Path] = []
+
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append((Path.cwd() / raw).resolve())
+        candidates.append((current_root / raw).resolve())
+        candidates.append((Path.home() / "projects" / raw).resolve())
+        candidates.append((Path.home() / "codex" / raw).resolve())
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise SystemExit(f"Reference not found locally: {ref}")
+
+
+def read_memory_project_type(root: Path) -> str | None:
+    memory_path = root / "memory" / "context.md"
+    if not memory_path.exists():
+        return None
+
+    text = memory_path.read_text(encoding="utf-8")
+    match = re.search(r"detected project type:\s*(frontend|backend|writing|general)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+
+    return None
+
+
+def detect_project_type(root: Path) -> str:
+    memory_hint = read_memory_project_type(root)
+
+    package_json = root / "package.json"
+    package_deps = set()
+    if package_json.exists():
+        try:
+            pkg = json.loads(package_json.read_text(encoding="utf-8"))
+            for section in ("dependencies", "devDependencies", "peerDependencies"):
+                deps = pkg.get(section, {})
+                if isinstance(deps, dict):
+                    package_deps.update(deps.keys())
+        except Exception:
+            pass
+
+    if package_deps.intersection({"react", "next", "vite", "vue"}) or (root / "src" / "components").is_dir():
+        return "frontend"
+
+    if (
+        package_deps.intersection({"express", "fastify"})
+        or (root / "requirements.txt").is_file()
+        or (root / "pyproject.toml").is_file()
+        or (root / "api").is_dir()
+        or (root / "routes").is_dir()
+    ):
+        return "backend"
+
+    if (root / "docs").is_dir():
+        return "writing"
+
+    md_count = 0
+    total_count = 0
+    skip_dirs = {".git", "node_modules", "dist", "build", "tmp", "temp", ".vscode", ".idea", "__pycache__"}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in skip_dirs for part in path.parts):
+            continue
+        total_count += 1
+        if path.suffix.lower() == ".md":
+            md_count += 1
+
+    if total_count > 0 and md_count / total_count >= 0.6:
+        return "writing"
+
+    if memory_hint in PROJECT_TYPES:
+        return memory_hint
+
+    return "general"
+
+
+def update_memory_context(root: Path, project_type: str) -> None:
+    memory_path = root / "memory" / "context.md"
+    if not memory_path.exists():
+        return
+
+    text = memory_path.read_text(encoding="utf-8")
+    line = f"- detected project type: {project_type}"
+
+    if re.search(r"- detected project type:\s*(frontend|backend|writing|general)", text, re.IGNORECASE):
+        next_text = re.sub(
+            r"- detected project type:\s*(frontend|backend|writing|general)",
+            line,
+            text,
+            flags=re.IGNORECASE,
+        )
+    else:
+        if "## Current State" in text:
+            next_text = text.replace("## Current State\n", f"## Current State\n{line}\n", 1)
+        else:
+            next_text = f"{text.rstrip()}\n\n## Current State\n{line}\n"
+
+    if next_text != text:
+        memory_path.write_text(next_text, encoding="utf-8")
+
+
+def normalize_plugin_args(plugin_args: list[str]) -> list[str]:
+    result: list[str] = []
+    for item in plugin_args:
+        for name in item.split(","):
+            clean = name.strip()
+            if clean:
+                result.append(clean)
+    return result
+
+
+def scan_plugin_dir(directory: Path) -> dict[str, Path]:
+    found: dict[str, Path] = {}
+    if not directory.is_dir():
+        return found
+
+    for child in sorted(directory.iterdir()):
+        skill = child / "SKILL.md"
+        if child.is_dir() and skill.is_file():
+            found[child.name] = skill
+
+    return found
+
+
+def ensure_global_plugins_dir() -> Path:
+    GLOBAL_SYSTEM_PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+    return GLOBAL_SYSTEM_PLUGINS_DIR
+
+
+def load_plugin_registry() -> dict[str, str]:
+    if not PLUGIN_REGISTRY_PATH.exists():
+        return {}
+
+    try:
+        data = json.loads(PLUGIN_REGISTRY_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid plugin registry JSON: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise SystemExit("Invalid plugin registry format: expected JSON object")
+
+    registry: dict[str, str] = {}
+    for key, value in data.items():
+        if isinstance(key, str) and isinstance(value, str):
+            registry[key] = value
+    return registry
+
+
+def is_url(value: str) -> bool:
+    return value.startswith(REMOTE_PREFIXES)
+
+
+def derive_plugin_name_from_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        candidate = Path(parsed.path).name
+    elif parsed.scheme:
+        candidate = parsed.path.rstrip("/").split("/")[-1]
+    else:
+        candidate = url.rstrip("/").split("/")[-1]
+
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+
+    candidate = re.sub(r"[^A-Za-z0-9._-]", "-", candidate).strip("-")
+    if not candidate:
+        raise SystemExit(f"Could not derive plugin name from URL: {url}")
+    return candidate
+
+
+def clone_repo_shallow(url: str, target_dir: Path) -> None:
+    cmd = ["git", "clone", "--depth", "1", url, str(target_dir)]
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "git clone failed").strip()
+        raise SystemExit(f"Plugin install failed while cloning {url}: {err}")
+
+
+def find_skill_file(clone_root: Path, plugin_name: str) -> Path:
+    direct_candidates = [
+        clone_root / "SKILL.md",
+        clone_root / plugin_name / "SKILL.md",
+        clone_root / "plugins" / plugin_name / "SKILL.md",
+    ]
+    for candidate in direct_candidates:
+        if candidate.is_file():
+            return candidate
+
+    recursive = [p for p in clone_root.rglob("SKILL.md") if ".git" not in p.parts]
+    if not recursive:
+        raise SystemExit("Plugin install failed: SKILL.md not found in repository")
+
+    if len(recursive) > 1:
+        names = ", ".join(str(p.relative_to(clone_root)) for p in recursive[:5])
+        raise SystemExit(f"Plugin install failed: multiple SKILL.md files found ({names}); expected one plugin")
+
+    return recursive[0]
+
+
+def safe_copy_plugin(skill_path: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=False)
+
+    shutil.copy2(skill_path, destination / "SKILL.md")
+
+    source_dir = skill_path.parent
+    for meta in OPTIONAL_PLUGIN_METADATA:
+        src = source_dir / meta
+        if src.is_file():
+            shutil.copy2(src, destination / meta)
+
+
+def plugin_install(spec: str) -> int:
+    global_plugins = ensure_global_plugins_dir()
+
+    requested = spec.strip()
+    if not requested:
+        raise SystemExit("Plugin name or URL is required")
+
+    if is_url(requested):
+        plugin_name = derive_plugin_name_from_url(requested)
+        source_url = requested
+    else:
+        plugin_name = requested
+        registry = load_plugin_registry()
+        if plugin_name not in registry:
+            raise SystemExit(
+                f"Plugin '{plugin_name}' not found in registry ({PLUGIN_REGISTRY_PATH})."
+            )
+        source_url = registry[plugin_name]
+
+    destination = global_plugins / plugin_name
+    if destination.exists():
+        print(f"Plugin already exists, not overwritten: {destination}")
+        return 1
+
+    with tempfile.TemporaryDirectory(prefix="ro-plugin-") as temp_dir:
+        clone_root = Path(temp_dir) / "repo"
+        clone_repo_shallow(source_url, clone_root)
+        skill = find_skill_file(clone_root, plugin_name)
+        safe_copy_plugin(skill, destination)
+
+    print(f"Installed plugin '{plugin_name}' at {destination}")
+    return 0
+
+
+def plugin_list() -> int:
+    global_plugins = ensure_global_plugins_dir()
+    plugins = scan_plugin_dir(global_plugins)
+
+    if not plugins:
+        print("No plugins installed in ~/.codex/system/plugins")
+        return 0
+
+    for name, skill in sorted(plugins.items()):
+        print(f"{name}\t{skill.parent}")
+    return 0
+
+
+def plugin_remove(name: str) -> int:
+    plugin_name = name.strip()
+    if not plugin_name:
+        raise SystemExit("Plugin name is required")
+
+    target = ensure_global_plugins_dir() / plugin_name
+    if not target.exists() or not target.is_dir():
+        raise SystemExit(f"Plugin not found: {plugin_name}")
+
+    shutil.rmtree(target)
+    print(f"Removed plugin '{plugin_name}' from {target}")
+    return 0
+
+
+def handle_plugin_command(parts: list[str]) -> int:
+    if not parts:
+        raise SystemExit("Usage: ro plugin <install|list|remove> [name|url]")
+
+    action = parts[0]
+    if action == "list":
+        return plugin_list()
+
+    if action == "install":
+        if len(parts) < 2:
+            raise SystemExit("Usage: ro plugin install <name|url>")
+        return plugin_install(parts[1])
+
+    if action == "remove":
+        if len(parts) < 2:
+            raise SystemExit("Usage: ro plugin remove <name>")
+        return plugin_remove(parts[1])
+
+    raise SystemExit(f"Unknown plugin command: {action}")
+
+
+def discover_plugins(root: Path) -> tuple[dict[str, Path], dict[str, Path]]:
+    project_plugins = scan_plugin_dir(root / "plugins")
+    global_plugins = scan_plugin_dir(ensure_global_plugins_dir())
+
+    # If global system points to the same project, avoid duplicate global entries.
+    project_real = {(p.resolve(), n) for n, p in project_plugins.items()}
+    filtered_global: dict[str, Path] = {}
+    for name, path in global_plugins.items():
+        marker = (path.resolve(), name)
+        if marker in project_real:
+            continue
+        filtered_global[name] = path
+
+    return project_plugins, filtered_global
+
+
+def plugin_matches_task(name: str, task: str) -> bool:
+    lower_task = task.lower()
+    lower_name = name.lower()
+
+    if "sql" in lower_task or "query" in lower_task:
+        if "sql" in lower_name or "query" in lower_name:
+            return True
+
+    if any(word in lower_task for word in ("debug", "bug", "traceback", "error")):
+        if "debug" in lower_name or "bug" in lower_name:
+            return True
+
+    if "api" in lower_task:
+        if "api" in lower_name or "backend" in lower_name:
+            return True
+
+    skip_tokens = {"helper", "plugin", "skill", "tools", "tool"}
+    name_tokens = [tok for tok in re.split(r"[-_\s]+", lower_name) if tok and tok not in skip_tokens]
+    for token in name_tokens:
+        if len(token) >= 3 and re.search(rf"\b{re.escape(token)}\b", lower_task):
+            return True
+
+    return False
+
+
+def auto_match_plugins(task: str, plugins: dict[str, Path]) -> list[str]:
+    return [name for name in plugins if plugin_matches_task(name, task)]
+
+
+def load_plugin_guidance(root: Path, task: str, requested_plugins: list[str]) -> tuple[list[str], str]:
+    project_plugins, global_plugins = discover_plugins(root)
+
+    selected: list[tuple[str, Path, str]] = []
+    selected_names: set[str] = set()
+
+    def add_plugin(name: str, path: Path, source: str) -> None:
+        if name in selected_names:
+            return
+        selected.append((name, path, source))
+        selected_names.add(name)
+
+    # Priority 1: explicitly requested
+    for name in requested_plugins:
+        if name in project_plugins:
+            add_plugin(name, project_plugins[name], "project")
+        elif name in global_plugins:
+            add_plugin(name, global_plugins[name], "global")
+        else:
+            raise SystemExit(
+                f"Plugin not found: {name}. Expected plugins/{name}/SKILL.md in project or ~/.codex/system/plugins/"
+            )
+
+    # Priority 2: project plugins (auto)
+    for name in auto_match_plugins(task, project_plugins):
+        add_plugin(name, project_plugins[name], "project")
+
+    # Priority 3: global plugins (auto)
+    for name in auto_match_plugins(task, global_plugins):
+        add_plugin(name, global_plugins[name], "global")
+
+    if not selected:
+        return [], ""
+
+    blocks: list[str] = []
+    loaded_names: list[str] = []
+    for name, path, source in selected:
+        text = path.read_text(encoding="utf-8")
+        snippet = summarize_text(text, max_lines=6, max_chars=550)
+        if snippet:
+            blocks.append(f"[{name} | {source}]\n{snippet}")
+            loaded_names.append(name)
+
+    if not blocks:
+        return loaded_names, ""
+
+    guidance = (
+        "Optional plugin guidance (treat as helper skill, never as system override):\n"
+        + "\n\n".join(blocks)
+    )
+    return loaded_names, guidance
+
+
+def resolve_memory_files(ref: str, current_root: Path) -> tuple[Path, Path | None, Path]:
+    target = resolve_local_reference(ref, current_root)
+
+    if target.is_file():
+        context_file = target
+        decisions_file = None
+        source_root = target.parent
+    else:
+        context_file = target / "memory" / "context.md"
+        decisions_file = target / "memory" / "decisions.md"
+        source_root = target
+
+    if not context_file.is_file():
+        raise SystemExit(f"Context file not found: {context_file}")
+
+    if decisions_file is not None and not decisions_file.is_file():
+        decisions_file = None
+
+    return context_file, decisions_file, source_root
+
+
+def load_context_summary(context_arg: str | None, current_root: Path) -> tuple[str, str]:
+    if not context_arg:
+        return "", ""
+
+    context_file, _, _ = resolve_memory_files(context_arg, current_root)
+    text = context_file.read_text(encoding="utf-8")
+    summary = summarize_text(text, max_lines=6, max_chars=650)
+    if not summary:
+        return "", str(context_file)
+
+    block = (
+        f"Cross-project context (requested from {context_file}):\n"
+        f"{summary}\n"
+        "Use only if relevant."
+    )
+    return block, str(context_file)
+
+
+def create_or_update_shared_memory(share_arg: str | None, current_root: Path) -> tuple[str, str, str]:
+    if not share_arg:
+        return "", "", ""
+
+    context_file, decisions_file, source_root = resolve_memory_files(share_arg, current_root)
+
+    context_text = context_file.read_text(encoding="utf-8")
+    context_summary = summarize_text(context_text, max_lines=6, max_chars=700)
+
+    decisions_summary = ""
+    if decisions_file is not None:
+        decisions_text = decisions_file.read_text(encoding="utf-8")
+        decisions_summary = summarize_text(decisions_text, max_lines=6, max_chars=700)
+
+    source_ref = str(source_root.resolve())
+    share_hash = hashlib.sha1(source_ref.encode("utf-8")).hexdigest()[:10]
+    shared_file = current_root / "memory" / f"shared_{share_hash}.md"
+    shared_file.parent.mkdir(parents=True, exist_ok=True)
+
+    fingerprint_raw = f"{context_summary}\n---\n{decisions_summary}".encode("utf-8")
+    fingerprint = hashlib.sha1(fingerprint_raw).hexdigest()[:12]
+
+    update_block = [
+        f"## Update {now_iso()}",
+        f"fingerprint: {fingerprint}",
+        "### Context Summary",
+        context_summary or "- (none)",
+        "### Decisions Summary",
+        decisions_summary or "- (none)",
+        "",
+    ]
+    update_text = "\n".join(update_block)
+
+    if shared_file.exists():
+        existing = shared_file.read_text(encoding="utf-8")
+        if f"fingerprint: {fingerprint}" not in existing:
+            shared_file.write_text(existing.rstrip() + "\n\n" + update_text, encoding="utf-8")
+    else:
+        header = [
+            "# Shared Memory",
+            "",
+            f"source: {source_ref}",
+            f"context_file: {context_file}",
+            f"decisions_file: {decisions_file if decisions_file else '(none)'}",
+            "",
+        ]
+        shared_file.write_text("\n".join(header) + update_text, encoding="utf-8")
+
+    block = (
+        f"Shared memory (explicitly loaded from {source_ref}; isolated file {shared_file.name}):\n"
+        f"Context:\n{context_summary or '- (none)'}\n"
+        f"Decisions:\n{decisions_summary or '- (none)'}\n"
+        "Use as optional reference only."
+    )
+    return block, source_ref, str(shared_file)
+
+
+def load_global_memory_summary() -> tuple[str, bool]:
+    if not GLOBAL_MEMORY_PATH.is_file():
+        return "", False
+
+    text = GLOBAL_MEMORY_PATH.read_text(encoding="utf-8")
+    summary = summarize_text(text, max_lines=5, max_chars=450)
+    if not summary:
+        return "", True
+
+    block = (
+        "Global memory snippet (optional reusable preferences/patterns; project memory stays primary):\n"
+        f"{summary}"
+    )
+    return block, True
+
+
+def parse_mode_and_prompt(parts: list[str]) -> tuple[str, str, str | None]:
+    commands = {"auto", "build", "write", "analyze"}
+
+    if len(parts) >= 2 and parts[0] in commands:
+        command = parts[0]
+        prompt = " ".join(parts[1:]).strip()
+    else:
+        command = "auto"
+        prompt = " ".join(parts).strip()
+
+    if not prompt:
+        raise SystemExit("Prompt is required.")
+
+    forced_mode = None
+    if command == "build":
+        forced_mode = "coding"
+    elif command == "write":
+        forced_mode = "writing"
+    elif command == "analyze":
+        forced_mode = "analysis/planning"
+
+    return command, prompt, forced_mode
+
+
+def build_prompt(
+    base_prompt: str,
+    project_type: str,
+    forced_mode: str | None,
+    context_block: str,
+    shared_block: str,
+    global_memory_block: str,
+    plugin_block: str,
+) -> str:
+    parts = [base_prompt.strip()]
+
+    if forced_mode == "coding":
+        parts.append("Treat this as a coding task.")
+    elif forced_mode == "writing":
+        parts.append("Treat this as a writing task.")
+    elif forced_mode == "analysis/planning":
+        parts.append("Treat this as an analysis and planning task.")
+
+    addendum = PROJECT_PROMPT_APPEND.get(project_type, "")
+    if addendum:
+        parts.append(addendum)
+
+    if context_block:
+        parts.append(context_block)
+
+    if shared_block:
+        parts.append(shared_block)
+
+    if global_memory_block:
+        parts.append(global_memory_block)
+
+    if plugin_block:
+        parts.append(plugin_block)
+
+    return "\n\n".join(p for p in parts if p)
+
+
+def run_codex(root: Path, prompt: str) -> tuple[int, str, str]:
+    codex_exe = resolve_codex_executable()
+    cmd = [codex_exe, "exec", "--cd", str(root), prompt]
+    proc = subprocess.run(cmd, cwd=root, text=True, capture_output=True)
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def extract_error_blob(code: int, stdout: str, stderr: str) -> tuple[bool, str, bool]:
+    combined = (stdout + "\n" + stderr).strip()
+    lines = [ln.strip() for ln in combined.splitlines() if ln.strip()]
+
+    has_pattern_error = any(p.search(combined) for p in ERROR_PATTERNS)
+    user_input_needed = any(p.search(combined) for p in USER_INPUT_PATTERNS)
+    has_error = code != 0 or has_pattern_error
+
+    error_line = ""
+    if has_error:
+        for ln in lines:
+            if any(p.search(ln) for p in ERROR_PATTERNS):
+                error_line = ln
+                break
+        if not error_line:
+            error_line = (lines[-1] if lines else "Unknown execution error")[:800]
+
+    return has_error, error_line, user_input_needed
+
+
+def save_history(root: Path, entry: dict) -> None:
+    history_path = root / ".ro_history.json"
+    data = {"entries": []}
+    if history_path.exists():
+        try:
+            data = json.loads(history_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or "entries" not in data or not isinstance(data["entries"], list):
+                data = {"entries": []}
+        except Exception:
+            data = {"entries": []}
+
+    data["entries"].append(entry)
+    data["entries"] = data["entries"][-200:]
+    history_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def execute_task(
+    root: Path,
+    parts: list[str],
+    dry_run: bool,
+    context_arg: str | None,
+    share_arg: str | None,
+    plugin_args: list[str],
+) -> int:
+    command, user_prompt, forced_mode = parse_mode_and_prompt(parts)
+    project_type = detect_project_type(root)
+    update_memory_context(root, project_type)
+
+    context_block, context_source = load_context_summary(context_arg, root)
+    shared_block, shared_source, shared_file = create_or_update_shared_memory(share_arg, root)
+    global_memory_block, global_memory_used = load_global_memory_summary()
+    requested_plugins = normalize_plugin_args(plugin_args)
+    selected_plugins, plugin_block = load_plugin_guidance(root, user_prompt, requested_plugins)
+
+    prepared_prompt = build_prompt(
+        user_prompt,
+        project_type,
+        forced_mode,
+        context_block,
+        shared_block,
+        global_memory_block,
+        plugin_block,
+    )
+
+    if dry_run:
+        print(f"project_root={root}")
+        print(f"mode_command={command}")
+        print(f"forced_mode={forced_mode or 'auto'}")
+        print(f"project_type={project_type}")
+        print(f"context_source={context_source or 'none'}")
+        print(f"share_source={shared_source or 'none'}")
+        print(f"shared_memory_file={shared_file or 'none'}")
+        print(f"global_memory_loaded={'yes' if global_memory_used else 'no'}")
+        print("plugins_loaded=" + (", ".join(selected_plugins) if selected_plugins else "none"))
+        print("prompt=\n" + prepared_prompt)
+        save_history(
+            root,
+            {
+                "timestamp": now_iso(),
+                "project_root": str(root),
+                "command": command,
+                "forced_mode": forced_mode or "auto",
+                "project_type": project_type,
+                "prompt": user_prompt,
+                "status": "dry_run",
+                "retries": 0,
+                "context_source": context_source,
+                "share_source": shared_source,
+                "shared_memory_file": shared_file,
+                "global_memory_loaded": global_memory_used,
+                "plugins_loaded": selected_plugins,
+            },
+        )
+        return 0
+
+    retries = 0
+    last_error = ""
+    working_prompt = prepared_prompt
+    status = "failed"
+
+    while True:
+        code, out, err = run_codex(root, working_prompt)
+
+        if out:
+            print(out, end="" if out.endswith("\n") else "\n")
+        if err:
+            print(err, file=sys.stderr, end="" if err.endswith("\n") else "\n")
+
+        has_error, error_blob, needs_input = extract_error_blob(code, out, err)
+
+        if not has_error:
+            status = "success"
+            break
+
+        if needs_input:
+            status = "needs_user_input"
+            last_error = error_blob
+            break
+
+        if retries >= MAX_RETRIES:
+            status = "failed"
+            last_error = error_blob
+            break
+
+        if error_blob == last_error and error_blob:
+            status = "no_improvement"
+            break
+
+        retries += 1
+        last_error = error_blob
+        working_prompt = (
+            "Fix the following error and ensure the solution works correctly:\n"
+            f"{error_blob}\n\n"
+            f"Retry attempt: {retries}. Do not repeat the same approach. Refine the solution and validate it."
+        )
+
+    save_history(
+        root,
+        {
+            "timestamp": now_iso(),
+            "project_root": str(root),
+            "command": command,
+            "forced_mode": forced_mode or "auto",
+            "project_type": project_type,
+            "prompt": user_prompt,
+            "status": status,
+            "retries": retries,
+            "last_error": last_error,
+            "context_source": context_source,
+            "share_source": shared_source,
+            "shared_memory_file": shared_file,
+            "global_memory_loaded": global_memory_used,
+            "plugins_loaded": selected_plugins,
+        },
+    )
+
+    return 0 if status == "success" else 1
+
+
+def run_interactive(
+    root: Path,
+    dry_run: bool,
+    context_arg: str | None,
+    share_arg: str | None,
+    plugin_args: list[str],
+) -> int:
+    try:
+        import readline  # noqa: F401  # Enables line editing/history when available.
+    except Exception:
+        pass
+
+    while True:
+        try:
+            line = input("ro > ").strip()
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print()
+            continue
+
+        if not line:
+            continue
+
+        if line.lower() in {"exit", "quit"}:
+            return 0
+
+        try:
+            parts = shlex.split(line)
+        except ValueError as exc:
+            print(f"Input parse error: {exc}", file=sys.stderr)
+            continue
+
+        try:
+            execute_task(root, parts, dry_run=dry_run, context_arg=context_arg, share_arg=share_arg, plugin_args=plugin_args)
+        except SystemExit as exc:
+            if str(exc):
+                print(str(exc), file=sys.stderr)
+
+
+def main() -> int:
+    args = parse_args()
+
+    if args.parts and args.parts[0] == "plugin":
+        return handle_plugin_command(args.parts[1:])
+
+    root = find_project_root(Path.cwd())
+    ensure_project_bootstrap(root)
+
+    if not args.parts:
+        return run_interactive(
+            root,
+            dry_run=args.dry_run,
+            context_arg=args.context,
+            share_arg=args.share,
+            plugin_args=args.plugin,
+        )
+
+    return execute_task(
+        root,
+        args.parts,
+        dry_run=args.dry_run,
+        context_arg=args.context,
+        share_arg=args.share,
+        plugin_args=args.plugin,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
