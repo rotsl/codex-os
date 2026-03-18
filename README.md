@@ -1,6 +1,6 @@
 # Codex-OS
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.1](https://img.shields.io/badge/codexospackage-0.0.1-informational)](./codexospackage/package.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.1](https://img.shields.io/badge/codexospackage-0.0.1-informational)](./codexospackage/package.json) [![npm version](https://img.shields.io/npm/v/codexospackage.svg)](https://www.npmjs.com/package/codexospackage)
 
 ## Why This Exists
 Most people end up repeating the same setup in every repo: prompts, memory notes, and run habits.
@@ -231,6 +231,14 @@ rm -f ~/.local/bin/ro
 rm -f ~/.local/bin/codex
 mv ~/.codex.backup.<timestamp> ~/.codex
 ```
+
+
+## Changelog
+### v0.0.1 — March 18, 2026
+- Initial GitHub release: `v0.0.1`.
+- Added Codex-OS orchestrator, agents, skills, rules, contexts, and memory system.
+- Added `ro` CLI with project-aware routing, bounded recovery, context/share support, and plugin loading.
+- Added `codexospackage` npm wrapper with install/bootstrap and doctor commands.
 
 ## Practical Tips
 - Keep rules in rules/ and skills in skills/; avoid duplication.
