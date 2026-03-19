@@ -623,7 +623,7 @@
       }
 
       async function upsertProject() {
-        const projectId = fields.projectId.value.trim();
+        let projectId = fields.projectId.value.trim();
         const projectName = fields.projectName.value.trim();
         if (!projectId || !projectName) {
           throw new Error("projectId and projectName are required.");
@@ -633,6 +633,8 @@
           projectId,
           name: projectName
         });
+
+        fields.projectId.value = data.projectId; // ✅ update UI
 
         stateLabel.textContent = data.state || "IDEA";
         setLog("Project saved.");
