@@ -793,7 +793,7 @@
         if (data.error) {
           logTerminal("✖ BACKEND ERROR:");
           logTerminal(JSON.stringify(data, null, 2));
-          resultEl.textContent = "⚠️ Backend error: " + data.error;
+          resultEl.textContent = "⚠️ " + data.error;
           return;
         }
 
