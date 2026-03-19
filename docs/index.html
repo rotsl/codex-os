@@ -747,11 +747,23 @@
         const history = await api(`/projects/${encodeURIComponent(projectId)}/commands?limit=20`);
 
         stateLabel.textContent = project.state || "unknown";
-        historyEl.textContent = pretty(history.items || []);
+
+        const normalizedItems = (history.items || []).map((item) => {
+          let parsedOutput = item.output;
+          if (typeof item.output === "string") {
+            try {
+              parsedOutput = JSON.parse(item.output);
+            } catch {}
+          }
+          return { ...item, output: parsedOutput };
+        });
+
+        historyEl.textContent = JSON.stringify(normalizedItems, null, 2);
         logTerminal(`state → ${project.state}`);
         logTerminal(`commands loaded: ${(history.items || []).length}`);
         setLog("Project state refreshed.");
       }
+
       async function executeCommand() {
         const url = `${normalizeBaseUrl()}/execute`;
         const input = fields.inputText.value;
@@ -774,6 +786,8 @@
 
         const data = await res.json();
 
+        logTerminal("RAW RESPONSE:");
+        logTerminal(JSON.stringify(data, null, 2));
         logTerminal("✔ response received");
 
         if (data.error) {
@@ -798,17 +812,23 @@
           logTerminal("\n=== STATE: " + state + " ===");
         }
 
-        const finalOutput = parsed.final || parsed.output || data.final || data.output || "";
-        if (finalOutput && finalOutput.trim() === input.trim()) {
-          throw new Error("Echo detected");
+        if (!parsed.final) {
+          logTerminal("✖ Missing final output");
+          logTerminal(JSON.stringify(parsed, null, 2));
+          throw new Error("No final output from backend");
         }
 
-        if (finalOutput) {
-          logTerminal("\n=== FINAL OUTPUT ===");
-          logTerminal(finalOutput);
+        const finalOutput = parsed.final;
+
+        if (finalOutput.trim() === input.trim()) {
+          logTerminal("✖ Echo detected");
+          throw new Error("Model returned input instead of answer");
         }
 
-        resultEl.textContent = finalOutput;
+        logTerminal("\n=== FINAL OUTPUT ===");
+        logTerminal(finalOutput);
+
+        resultEl.textContent = finalOutput || "⚠️ No output returned";
         stateLabel.textContent = state || "UNKNOWN";
       }
 
