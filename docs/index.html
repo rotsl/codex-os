@@ -489,6 +489,13 @@
             <input id="sessionToken" placeholder="optional bearer token" />
           </div>
 
+          <div class="hint">
+            <strong>Session Token:</strong><br>
+            Identifies your session with the backend.<br>
+            Used to track projects and secure requests.<br>
+            Optional in MVP.
+          </div>
+
           <div class="two">
             <div class="row">
               <label for="projectId">Project ID</label>
@@ -501,13 +508,32 @@
           </div>
 
           <div class="row">
-            <label for="apiKey">OpenAI API Key (BYOK)</label>
+            <label for="apiKey">API Key (Selected Provider)</label>
             <input id="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
             <div class="hint">Sent once to backend for encryption at rest. This page does not store it.</div>
           </div>
 
+          <div class="two">
+            <div class="row">
+              <label for="provider">AI Provider</label>
+              <select id="provider">
+                <option value="openai">OpenAI</option>
+                <option value="claude">Claude (Anthropic)</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="model">Model</label>
+              <select id="model">
+                <option value="gpt-4o" data-provider="openai">GPT-4o</option>
+                <option value="gpt-4o-mini" data-provider="openai">GPT-4o Mini</option>
+                <option value="claude-3-sonnet-20240229" data-provider="claude">Claude Sonnet</option>
+                <option value="claude-3-haiku-20240307" data-provider="claude">Claude Haiku</option>
+              </select>
+            </div>
+          </div>
+
           <div class="actions">
-            <button class="muted" id="btnSession" type="button" title="Create a temporary session for this user">🔐 Start Session</button>
+            <button class="muted" id="btnSession" type="button" title="Start a temporary session for this user">🔐 Start Session</button>
             <button class="muted" id="btnUpsert" type="button" title="Create or update the current project">💾 Save Project</button>
             <button class="muted" id="btnKey" type="button" title="Store your API key securely for this project">🔑 Save API Key</button>
           </div>
@@ -529,6 +555,20 @@
               <label>Workflow State</label>
               <span class="state-badge" id="stateLabel">unknown</span>
             </div>
+          </div>
+
+          <div class="hint">
+            <strong>Commands:</strong><br>
+            /co-plan → Generate a plan from idea<br>
+            /co-create-spec → Create detailed specification<br>
+            /co-exec-tasks → Execute tasks step-by-step<br>
+            /co-analyze → Analyze results or improve output
+          </div>
+
+          <div class="hint">
+            <strong>Workflow State:</strong><br>
+            IDEA → PLAN → SPEC → TASKS → EXEC → ANALYZE<br>
+            Each command moves the project forward in this pipeline.
           </div>
 
           <div class="row">
@@ -561,6 +601,8 @@
       const historyEl = document.getElementById("history");
       const logEl = document.getElementById("log");
       const executeButton = document.getElementById("btnExecute");
+      const providerEl = document.getElementById("provider");
+      const modelEl = document.getElementById("model");
 
       const fields = {
         sessionToken: document.getElementById("sessionToken"),
@@ -597,6 +639,19 @@
         return text.replace(/<script/gi, "").replace(/```/g, "").trim();
       }
 
+      function filterModelsByProvider() {
+        const provider = providerEl.value;
+
+        [...modelEl.options].forEach((opt) => {
+          opt.hidden = opt.dataset.provider !== provider;
+        });
+
+        const firstVisible = [...modelEl.options].find((opt) => opt.dataset.provider === provider);
+        if (firstVisible) {
+          modelEl.value = firstVisible.value;
+        }
+      }
+
       async function api(path, method = "GET", body = null) {
         const url = `${normalizeBaseUrl()}${path}`;
         const opts = { method, headers: buildHeaders() };
@@ -630,7 +685,7 @@
           name: projectName
         });
 
-        fields.projectId.value = data.projectId; // ✅ update UI
+        fields.projectId.value = data.projectId || data.id || projectId;
         updateExecuteButtonState();
 
         stateLabel.textContent = data.state || "IDEA";
@@ -671,20 +726,24 @@
         const command = fields.command.value;
         const input = sanitizeInput(fields.inputText.value || "");
         const apiKey = fields.apiKey.value.trim();
+        const provider = providerEl.value;
+        const model = modelEl.value;
 
         if (!projectId || !command || !input) {
           throw new Error("projectId, command, and input are required.");
         }
 
         if (!apiKey) {
-          throw new Error("API key is required.");
+          throw new Error("API key required for selected provider");
         }
 
         const data = await api("/execute", "POST", {
           projectId,
           command,
           input,
-          apiKey
+          apiKey,
+          provider,
+          model
         });
 
         resultEl.textContent = pretty(data);
@@ -713,6 +772,9 @@
       document.getElementById("btnKey").addEventListener("click", () => run(storeApiKey));
       document.getElementById("btnExecute").addEventListener("click", () => run(executeCommand));
       document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
+
+      providerEl.addEventListener("change", filterModelsByProvider);
+      filterModelsByProvider();
 
       fields.projectId.addEventListener("input", updateExecuteButtonState);
       fields.apiKey.addEventListener("input", updateExecuteButtonState);
