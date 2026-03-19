@@ -780,8 +780,23 @@
           return;
         }
 
+        if (data.steps) {
+          data.steps.forEach((step) => {
+            logTerminal("→ " + step);
+          });
+        }
+
+        if (data.state) {
+          logTerminal("STATE → " + data.state);
+        }
+
+        if (data.output) {
+          logTerminal("\nFINAL OUTPUT:");
+          logTerminal(data.output);
+        }
+
         resultEl.textContent = data.output || "";
-        stateLabel.textContent = data.state || "done";
+        stateLabel.textContent = data.state || "UNKNOWN";
       }
 
       function updateExecuteButtonState() {
