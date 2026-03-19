@@ -754,6 +754,7 @@
       }
       async function executeCommand() {
         const url = `${normalizeBaseUrl()}/execute`;
+        const input = fields.inputText.value;
 
         logTerminal(`
 === EXECUTE ${fields.command.value} ===`);
@@ -764,7 +765,7 @@
           body: JSON.stringify({
             projectId: fields.projectId.value,
             command: fields.command.value,
-            input: fields.inputText.value,
+            input,
             apiKey: document.getElementById("apiKey").value,
             provider: getProvider(),
             model: getModel()
@@ -780,24 +781,35 @@
           return;
         }
 
-        if (data.steps) {
+        const parsed = typeof data.response === "string"
+          ? JSON.parse(data.response)
+          : (data.response && typeof data.response === "object" ? data.response : data);
+
+        const steps = parsed.steps || data.steps || [];
+        if (steps.length) {
           logTerminal("\n--- STEPS ---");
-          data.steps.forEach((step) => {
+          steps.forEach((step) => {
             logTerminal("• " + step);
           });
         }
 
-        if (data.state) {
-          logTerminal("\n=== STATE: " + data.state + " ===");
+        const state = parsed.state || data.state;
+        if (state) {
+          logTerminal("\n=== STATE: " + state + " ===");
         }
 
-        if (data.output) {
+        const finalOutput = parsed.final || parsed.output || data.final || data.output || "";
+        if (finalOutput && finalOutput.trim() === input.trim()) {
+          throw new Error("Echo detected");
+        }
+
+        if (finalOutput) {
           logTerminal("\n=== FINAL OUTPUT ===");
-          logTerminal(data.output);
+          logTerminal(finalOutput);
         }
 
-        resultEl.textContent = data.output || "";
-        stateLabel.textContent = data.state || "UNKNOWN";
+        resultEl.textContent = finalOutput;
+        stateLabel.textContent = state || "UNKNOWN";
       }
 
       function updateExecuteButtonState() {
