@@ -666,19 +666,25 @@
         historyEl.textContent = pretty(history.items || []);
         setLog("Project state refreshed.");
       }
-
       async function executeCommand() {
         const projectId = fields.projectId.value.trim();
         const command = fields.command.value;
         const input = sanitizeInput(fields.inputText.value || "");
+        const apiKey = fields.apiKey.value.trim();
+
         if (!projectId || !command || !input) {
           throw new Error("projectId, command, and input are required.");
+        }
+
+        if (!apiKey) {
+          throw new Error("API key is required.");
         }
 
         const data = await api("/execute", "POST", {
           projectId,
           command,
-          input
+          input,
+          apiKey
         });
 
         resultEl.textContent = pretty(data);
