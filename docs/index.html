@@ -580,6 +580,7 @@
           <div class="actions">
             <button class="primary" id="btnExecute" type="button" title="Run the selected command for this project" disabled>▶️ Run Command</button>
             <button class="muted" id="btnRefresh" type="button" title="Reload project state and command history">🔄 Refresh Status</button>
+            <button class="muted" id="btnClear" type="button" title="Clear terminal output">Clear Terminal</button>
           </div>
           <div class="hint">Set project and API key before running commands.</div>
 
@@ -589,6 +590,18 @@
         <article class="panel output">
           <h3 style="margin:0 0 0.6rem 0;">Latest Response</h3>
           <pre id="result">{ "status": "idle" }</pre>
+
+          <h3 style="margin:1rem 0 0.6rem 0;">Agent Terminal</h3>
+          <pre id="terminal" style="
+  background:#0b0f14;
+  color:#00ff9c;
+  padding:12px;
+  border-radius:12px;
+  max-height:300px;
+  overflow:auto;
+  font-family:monospace;
+  font-size:12px;
+"></pre>
 
           <h3 style="margin:1rem 0 0.6rem 0;">Recent Commands</h3>
           <pre id="history">[]</pre>
@@ -636,6 +649,21 @@
         logEl.textContent = msg;
       }
 
+      function logTerminal(msg) {
+        const el = document.getElementById("terminal");
+        if (!el) return;
+        el.textContent += msg + "\n";
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function logError(msg) {
+        logTerminal("✖ " + msg);
+      }
+
+      function logSuccess(msg) {
+        logTerminal("✔ " + msg);
+      }
+
       function pretty(obj) {
         return JSON.stringify(obj, null, 2);
       }
@@ -659,16 +687,24 @@
 
       async function api(path, method = "GET", body = null) {
         const url = `${normalizeBaseUrl()}${path}`;
-        const opts = { method, headers: buildHeaders() };
-        if (body) {
-          opts.body = JSON.stringify(body);
+
+        logTerminal(`→ ${method} ${path}`);
+
+        const res = await fetch(url, {
+          method,
+          headers: buildHeaders(),
+          body: body ? JSON.stringify(body) : null
+        });
+
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const msg = data.error || data.detail || res.status;
+          logTerminal(`✖ ERROR: ${msg}`);
+          throw new Error(data.error || data.detail || "Request failed");
         }
 
-        const res = await fetch(url, opts);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data.detail || `Request failed (${res.status})`);
-        }
+        logTerminal("✔ response received");
         return data;
       }
 
@@ -676,6 +712,7 @@
         const data = await api("/session/anonymous", "POST", {});
         fields.sessionToken.value = data.token || "";
         setLog("Anonymous session created.");
+        logSuccess("session created");
       }
 
       async function upsertProject() {
@@ -719,11 +756,15 @@
           throw new Error("projectId is required.");
         }
 
+        logTerminal("↻ refreshing project...");
+
         const project = await api(`/projects/${encodeURIComponent(projectId)}`);
         const history = await api(`/projects/${encodeURIComponent(projectId)}/commands?limit=20`);
 
         stateLabel.textContent = project.state || "unknown";
         historyEl.textContent = pretty(history.items || []);
+        logTerminal(`state → ${project.state}`);
+        logTerminal(`commands loaded: ${(history.items || []).length}`);
         setLog("Project state refreshed.");
       }
       async function executeCommand() {
@@ -742,6 +783,9 @@
           throw new Error("API key required for selected provider");
         }
 
+        logTerminal(`\n=== EXECUTE ${command} ===`);
+        logTerminal(`state: ${stateLabel.textContent}`);
+
         const data = await api("/execute", "POST", {
           projectId,
           command,
@@ -750,6 +794,16 @@
           provider,
           model
         });
+
+        logTerminal(`→ new state: ${data.state || data.newState}`);
+
+        if (data.steps) {
+          data.steps.forEach((step) => {
+            logTerminal(`• ${step}`);
+          });
+        }
+
+        logTerminal("✔ execution complete\n");
 
         resultEl.textContent = pretty(data);
         stateLabel.textContent = data.newState || data.state || stateLabel.textContent;
@@ -788,6 +842,10 @@
       document.getElementById("btnKey").addEventListener("click", () => run(storeApiKey));
       document.getElementById("btnExecute").addEventListener("click", () => run(executeCommand));
       document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
+      document.getElementById("btnClear").onclick = () => {
+        const terminal = document.getElementById("terminal");
+        if (terminal) terminal.textContent = "";
+      };
 
       providerEl.addEventListener("change", filterModelsByProvider);
       filterModelsByProvider();
