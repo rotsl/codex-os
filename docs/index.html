@@ -781,17 +781,18 @@
         }
 
         if (data.steps) {
+          logTerminal("\n--- STEPS ---");
           data.steps.forEach((step) => {
-            logTerminal("→ " + step);
+            logTerminal("• " + step);
           });
         }
 
         if (data.state) {
-          logTerminal("STATE → " + data.state);
+          logTerminal("\n=== STATE: " + data.state + " ===");
         }
 
         if (data.output) {
-          logTerminal("\nFINAL OUTPUT:");
+          logTerminal("\n=== FINAL OUTPUT ===");
           logTerminal(data.output);
         }
 
