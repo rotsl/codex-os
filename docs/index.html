@@ -533,12 +533,10 @@
           </div>
 
           <div class="actions">
-            <button class="muted" id="btnSession" type="button" title="Start a temporary session for this user">🔐 Start Session</button>
             <button class="muted" id="btnUpsert" type="button" title="Create or update the current project">💾 Save Project</button>
             <button class="muted" id="btnNewProject" type="button" title="Generate a new valid project UUID">New Project</button>
-            <button class="muted" id="btnKey" type="button" title="Store your API key securely for this project">🔑 Save API Key</button>
           </div>
-          <div class="hint">Start a session before running commands.</div>
+          <div class="hint">Enter API key, choose provider/model, then run command.</div>
 
           <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0;" />
 
@@ -627,8 +625,10 @@
         inputText: document.getElementById("inputText")
       };
 
+      const DEFAULT_API = "__BACKEND_BASE_URL__";
+
       function normalizeBaseUrl() {
-        return "__BACKEND_BASE_URL__";
+        return DEFAULT_API;
       }
 
       function generateUUID() {
@@ -716,13 +716,6 @@
         return data;
       }
 
-      async function createSession() {
-        const data = await api("/session/anonymous", "POST", {});
-        fields.sessionToken.value = data.token || "";
-        setLog("Anonymous session created.");
-        logSuccess("session created");
-      }
-
       async function upsertProject() {
         let projectId = fields.projectId.value.trim();
         const projectName = fields.projectName.value.trim();
@@ -742,22 +735,6 @@
         setLog("Project saved.");
       }
 
-      async function storeApiKey() {
-        const projectId = fields.projectId.value.trim();
-        const apiKey = fields.apiKey.value.trim();
-        if (!projectId || !apiKey) {
-          throw new Error("projectId and API key are required.");
-        }
-
-        await api(`/projects/${encodeURIComponent(projectId)}/api-key`, "POST", {
-          apiKey
-        });
-
-        fields.apiKey.value = "";
-        updateExecuteButtonState();
-        setLog("API key encrypted and stored server-side.");
-      }
-
       async function refreshProject() {
         const projectId = fields.projectId.value.trim();
         if (!projectId) {
@@ -775,119 +752,36 @@
         logTerminal(`commands loaded: ${(history.items || []).length}`);
         setLog("Project state refreshed.");
       }
-      async function executeCommandNonStreaming() {
-        const projectId = fields.projectId.value.trim();
-        const command = fields.command.value;
-        const input = sanitizeInput(fields.inputText.value || "");
-        const apiKey = fields.apiKey.value.trim();
-        const provider = providerEl.value;
-        const model = modelEl.value;
+      async function executeCommand() {
+        const url = `${normalizeBaseUrl()}/execute`;
 
-        if (!projectId || !command || !input) {
-          throw new Error("projectId, command, and input are required.");
-        }
+        logTerminal(`
+=== EXECUTE ${fields.command.value} ===`);
 
-        if (!apiKey) {
-          throw new Error("API key required for selected provider");
-        }
-
-        logTerminal(`\n=== EXECUTE ${command} ===`);
-        logTerminal(`state: ${stateLabel.textContent}`);
-
-        const data = await api("/execute", "POST", {
-          projectId,
-          command,
-          input,
-          apiKey,
-          provider,
-          model
+        const res = await fetch(url, {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify({
+            projectId: fields.projectId.value,
+            command: fields.command.value,
+            input: fields.inputText.value,
+            apiKey: document.getElementById("apiKey").value,
+            provider: getProvider(),
+            model: getModel()
+          })
         });
 
-        logTerminal(`→ new state: ${data.state || data.newState}`);
+        const data = await res.json();
 
-        if (data.steps) {
-          data.steps.forEach((step) => {
-            logTerminal(`• ${step}`);
-          });
+        logTerminal("✔ response received");
+
+        if (data.error) {
+          logTerminal("✖ " + data.error);
+          return;
         }
 
-        logTerminal("✔ execution complete\n");
-
-        resultEl.textContent = pretty(data);
-        stateLabel.textContent = data.newState || data.state || stateLabel.textContent;
-        setLog("Command executed.");
-
-        await refreshProject();
-      }
-
-      async function executeCommand() {
-        try {
-          const url = `${normalizeBaseUrl()}/execute-stream`;
-
-          logTerminal(`\n=== EXECUTE ${fields.command.value} ===`);
-          logTerminal(`state: ${stateLabel.textContent}`);
-
-          const res = await fetch(url, {
-            method: "POST",
-            headers: buildHeaders(),
-            body: JSON.stringify({
-              projectId: fields.projectId.value,
-              command: fields.command.value,
-              input: fields.inputText.value,
-              provider: getProvider(),
-              model: getModel()
-            })
-          });
-
-          if (!res.ok || !res.body) {
-            throw new Error(`Streaming request failed (${res.status})`);
-          }
-
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-
-          let output = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value);
-            const lines = chunk.split("\n");
-
-            for (let line of lines) {
-              if (!line.startsWith("data:")) continue;
-
-              let data;
-              try {
-                data = JSON.parse(line.replace("data:", "").trim());
-              } catch {
-                continue;
-              }
-
-              if (data.type === "start") {
-                logTerminal("▶ streaming started");
-              }
-
-              if (data.type === "token") {
-                output += data.value;
-                resultEl.textContent = output;
-              }
-
-              if (data.type === "done") {
-                logTerminal("✔ streaming complete");
-                stateLabel.textContent = "DONE";
-              }
-
-              if (data.type === "error") {
-                logTerminal("✖ " + data.error);
-              }
-            }
-          }
-        } catch (err) {
-          logTerminal("⚠ fallback to normal execute");
-          await executeCommandNonStreaming();
-        }
+        resultEl.textContent = data.output || "";
+        stateLabel.textContent = data.state || "done";
       }
 
       function updateExecuteButtonState() {
@@ -911,13 +805,11 @@
         updateExecuteButtonState();
       });
 
-      document.getElementById("btnSession").addEventListener("click", () => run(createSession));
       document.getElementById("btnUpsert").addEventListener("click", () => run(upsertProject));
       document.getElementById("btnNewProject").addEventListener("click", () => {
         fields.projectId.value = generateUUID();
         updateExecuteButtonState();
       });
-      document.getElementById("btnKey").addEventListener("click", () => run(storeApiKey));
       document.getElementById("btnExecute").addEventListener("click", () => run(executeCommand));
       document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
       document.getElementById("btnClear").onclick = () => {
