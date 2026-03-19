@@ -499,6 +499,68 @@
         font-size: 0.82rem;
       }
 
+      .plain-text {
+        white-space: pre-wrap;
+        line-height: 1.5;
+        font-size: 0.9rem;
+      }
+
+      .artifact {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.9);
+        overflow: hidden;
+      }
+
+      .artifact-header {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.42rem 0.55rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(17, 167, 162, 0.08);
+      }
+
+      .artifact-kind {
+        font-family: "Space Mono", monospace;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.08rem 0.35rem;
+        border-radius: 999px;
+        background: rgba(16, 33, 39, 0.12);
+      }
+
+      .artifact-title {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .artifact-body {
+        padding: 0.55rem;
+      }
+
+      .terminal-entry .artifact {
+        border-color: rgba(0, 255, 156, 0.22);
+        background: rgba(10, 16, 24, 0.92);
+      }
+
+      .terminal-entry .artifact-header {
+        border-bottom-color: rgba(0, 255, 156, 0.22);
+        background: rgba(8, 14, 22, 0.95);
+      }
+
+      .terminal-entry .artifact-kind {
+        color: #b8ffe3;
+        background: rgba(0, 255, 156, 0.12);
+      }
+
+      .terminal-entry .artifact-title,
+      .terminal-entry .plain-text {
+        color: #d7ffec;
+      }
+
       .ok { color: var(--good); }
       .err { color: var(--bad); }
 
@@ -850,13 +912,69 @@
         return html || '<div class="empty-note">No content</div>';
       }
 
+      function isLikelyMarkdownTable(text) {
+        const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (lines.length < 2) return false;
+        return /\|/.test(lines[0]) && /^\|?\s*[:-|\s]+$/.test(lines[1]);
+      }
+
+      function parseMarkdownTable(text) {
+        const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (lines.length < 2) return null;
+        const splitCells = (line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+        const header = splitCells(lines[0]);
+        const body = lines.slice(2).map(splitCells);
+        return { header, body };
+      }
+
+      function renderMarkdownTable(text) {
+        const parsed = parseMarkdownTable(text);
+        if (!parsed) return '<div class="empty-note">No table rows</div>';
+        const headHtml = parsed.header.map((cell) => '<th>' + escapeHtml(cell) + '</th>').join("");
+        const bodyHtml = parsed.body.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("");
+        return '<table class="csv-table"><thead><tr>' + headHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody></table>';
+      }
+
+      function looksLikeCode(text) {
+        const codeSignals = [
+          /^\s*(def|class|import|from)\s+/m,
+          /^\s*(function|const|let|var)\s+/m,
+          /^\s*(SELECT|WITH|INSERT|UPDATE|CREATE\s+TABLE)\s+/im,
+          /[{};]{2,}/,
+          /<\/?[A-Za-z][^>]*>/
+        ];
+        return codeSignals.some((re) => re.test(text));
+      }
+
+      function looksLikeMarkdown(text) {
+        return /^(#{1,6})\s+/m.test(text)
+          || /^[-*]\s+/m.test(text)
+          || /^\d+\.\s+/m.test(text)
+          || /\[[^\]]+\]\([^\)]+\)/.test(text);
+      }
+
+      function renderPlainText(text) {
+        return '<div class="plain-text">' + escapeHtml(text) + '</div>';
+      }
+
+      function renderArtifact(kind, title, bodyHtml) {
+        return '<section class="artifact artifact-' + kind + '">' +
+          '<div class="artifact-header">' +
+          '<span class="artifact-kind">' + escapeHtml(kind) + '</span>' +
+          '<span class="artifact-title">' + escapeHtml(title) + '</span>' +
+          '</div>' +
+          '<div class="artifact-body">' + bodyHtml + '</div>' +
+          '</section>';
+      }
+
       function renderRichContent(value) {
         if (value == null || value === "") {
           return '<div class="empty-note">No output returned</div>';
         }
 
         if (typeof value === "object") {
-          return '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(value, null, 2)) + '</code></pre>';
+          const body = '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(value, null, 2)) + '</code></pre>';
+          return renderArtifact('json', 'JSON artifact', body);
         }
 
         const text = String(value).trim();
@@ -866,14 +984,32 @@
 
         if ((text.startsWith("{") || text.startsWith("[")) && tryParseJson(text) !== null) {
           const jsonObj = tryParseJson(text);
-          return '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(jsonObj, null, 2)) + '</code></pre>';
+          const body = '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(jsonObj, null, 2)) + '</code></pre>';
+          return renderArtifact('json', 'JSON artifact', body);
         }
 
         if (isLikelyCsv(text)) {
-          return renderCsvTable(text);
+          return renderArtifact('table', 'CSV table artifact', renderCsvTable(text));
         }
 
-        return renderMarkdownWithCodeFences(text);
+        if (isLikelyMarkdownTable(text)) {
+          return renderArtifact('table', 'Markdown table artifact', renderMarkdownTable(text));
+        }
+
+        if (/```[\s\S]*```/.test(text)) {
+          return renderArtifact('code', 'Code/Markdown artifact', renderMarkdownWithCodeFences(text));
+        }
+
+        if (looksLikeCode(text)) {
+          const body = '<pre class="rich-code"><code>' + escapeHtml(text) + '</code></pre>';
+          return renderArtifact('code', 'Code artifact', body);
+        }
+
+        if (looksLikeMarkdown(text)) {
+          return renderArtifact('markdown', 'Markdown artifact', '<div class="rich-markdown">' + renderPlainTextAsMarkdown(text) + '</div>');
+        }
+
+        return renderPlainText(text);
       }
 
       function setResultContent(content) {
