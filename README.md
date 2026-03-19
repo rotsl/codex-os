@@ -1,6 +1,6 @@
 # Codex-OS
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.1](https://img.shields.io/badge/codexospackage-0.0.1-informational)](./codexospackage/package.json) [![npm version](https://img.shields.io/npm/v/codexospackage.svg)](https://www.npmjs.com/package/codexospackage)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.1](https://img.shields.io/badge/codexospackage-0.0.1-informational)](./codexospackage/package.json) [![npm version](https://img.shields.io/npm/v/codexospackage.svg)](https://www.npmjs.com/package/codexospackage) [![Live Demo](https://img.shields.io/badge/Live%20Demo-rotsl.github.io%2Fcodex--os-0aa?logo=githubpages&logoColor=white)](https://rotsl.github.io/codex-os/)
 
 ## Why This Exists
 Most people end up repeating the same setup in every repo: prompts, memory notes, and run habits.
@@ -10,6 +10,13 @@ It keeps your local project state separate, supports optional cross-project cont
 ## What This Repo Is
 Codex-OS is a Codex-native operating layer made of markdown rules + a thin runner.
 It does not replace Codex. It standardizes how Codex behaves in your repos.
+
+## Hosted Frontend
+- Live site: https://rotsl.github.io/codex-os/
+- UI source: `docs/index.html`
+- Output rendering is type-aware:
+  - plain text renders directly
+  - code, markdown, JSON, and table-like content render as labeled artifacts
 
 ## Before You Install (Important)
 Back up your current Codex folder first.
@@ -187,6 +194,8 @@ Optional global memory:
 - `README.md`: user guide.
 - `LICENSE`: license terms.
 - `.gitignore`: repo hygiene.
+- `docs/index.html`: GitHub Pages frontend UI.
+- `docs/.nojekyll`: prevents Jekyll processing on Pages.
 - `plugin-registry.json`: default plugin registry seed.
 
 ### agents/
