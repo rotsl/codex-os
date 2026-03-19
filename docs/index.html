@@ -484,15 +484,9 @@
 
       <section class="app">
         <article class="panel form">
-          <div class="two">
-            <div class="row">
-              <label for="baseUrl">Backend Base URL</label>
-              <input id="baseUrl" value="https://api.codex-os.example" />
-            </div>
-            <div class="row">
-              <label for="sessionToken">Session Token (MVP)</label>
-              <input id="sessionToken" placeholder="optional bearer token" />
-            </div>
+          <div class="row">
+            <label for="sessionToken">Session Token (MVP)</label>
+            <input id="sessionToken" placeholder="optional bearer token" />
           </div>
 
           <div class="two">
@@ -513,10 +507,11 @@
           </div>
 
           <div class="actions">
-            <button class="muted" id="btnSession" type="button">Create Anonymous Session</button>
-            <button class="muted" id="btnUpsert" type="button">Save Project</button>
-            <button class="muted" id="btnKey" type="button">Store Encrypted Key</button>
+            <button class="muted" id="btnSession" type="button" title="Create a temporary session for this user">🔐 Start Session</button>
+            <button class="muted" id="btnUpsert" type="button" title="Create or update the current project">💾 Save Project</button>
+            <button class="muted" id="btnKey" type="button" title="Store your API key securely for this project">🔑 Save API Key</button>
           </div>
+          <div class="hint">Start a session before running commands.</div>
 
           <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0;" />
 
@@ -542,9 +537,10 @@
           </div>
 
           <div class="actions">
-            <button class="primary" id="btnExecute" type="button">Run /execute</button>
-            <button class="muted" id="btnRefresh" type="button">Refresh Project State</button>
+            <button class="primary" id="btnExecute" type="button" title="Run the selected command for this project" disabled>▶️ Run Command</button>
+            <button class="muted" id="btnRefresh" type="button" title="Reload project state and command history">🔄 Refresh Status</button>
           </div>
+          <div class="hint">Set project and API key before running commands.</div>
 
           <p class="log" id="log"></p>
         </article>
@@ -564,9 +560,9 @@
       const resultEl = document.getElementById("result");
       const historyEl = document.getElementById("history");
       const logEl = document.getElementById("log");
+      const executeButton = document.getElementById("btnExecute");
 
       const fields = {
-        baseUrl: document.getElementById("baseUrl"),
         sessionToken: document.getElementById("sessionToken"),
         projectId: document.getElementById("projectId"),
         projectName: document.getElementById("projectName"),
@@ -576,7 +572,7 @@
       };
 
       function normalizeBaseUrl() {
-        return fields.baseUrl.value.trim().replace(/\/$/, "");
+        return "__BACKEND_BASE_URL__";
       }
 
       function buildHeaders() {
@@ -635,6 +631,7 @@
         });
 
         fields.projectId.value = data.projectId; // ✅ update UI
+        updateExecuteButtonState();
 
         stateLabel.textContent = data.state || "IDEA";
         setLog("Project saved.");
@@ -652,6 +649,7 @@
         });
 
         fields.apiKey.value = "";
+        updateExecuteButtonState();
         setLog("API key encrypted and stored server-side.");
       }
 
@@ -696,6 +694,11 @@
         await refreshProject();
       }
 
+      function updateExecuteButtonState() {
+        const ready = fields.projectId.value.trim() && fields.apiKey.value.trim();
+        executeButton.disabled = !ready;
+      }
+
       async function run(handler) {
         setLog("Working...", "ok");
         try {
@@ -710,6 +713,10 @@
       document.getElementById("btnKey").addEventListener("click", () => run(storeApiKey));
       document.getElementById("btnExecute").addEventListener("click", () => run(executeCommand));
       document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
+
+      fields.projectId.addEventListener("input", updateExecuteButtonState);
+      fields.apiKey.addEventListener("input", updateExecuteButtonState);
+      updateExecuteButtonState();
     </script>
   </body>
 </html>
