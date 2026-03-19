@@ -499,7 +499,7 @@
           <div class="two">
             <div class="row">
               <label for="projectId">Project ID</label>
-              <input id="projectId" placeholder="project-123" />
+              <input id="projectId" readonly />
             </div>
             <div class="row">
               <label for="projectName">Project Name</label>
@@ -535,6 +535,7 @@
           <div class="actions">
             <button class="muted" id="btnSession" type="button" title="Start a temporary session for this user">🔐 Start Session</button>
             <button class="muted" id="btnUpsert" type="button" title="Create or update the current project">💾 Save Project</button>
+            <button class="muted" id="btnNewProject" type="button" title="Generate a new valid project UUID">New Project</button>
             <button class="muted" id="btnKey" type="button" title="Store your API key securely for this project">🔑 Save API Key</button>
           </div>
           <div class="hint">Start a session before running commands.</div>
@@ -615,6 +616,10 @@
 
       function normalizeBaseUrl() {
         return "__BACKEND_BASE_URL__";
+      }
+
+      function generateUUID() {
+        return crypto.randomUUID();
       }
 
       function buildHeaders() {
@@ -767,8 +772,19 @@
         }
       }
 
+      window.addEventListener("DOMContentLoaded", () => {
+        if (!fields.projectId.value) {
+          fields.projectId.value = generateUUID();
+        }
+        updateExecuteButtonState();
+      });
+
       document.getElementById("btnSession").addEventListener("click", () => run(createSession));
       document.getElementById("btnUpsert").addEventListener("click", () => run(upsertProject));
+      document.getElementById("btnNewProject").addEventListener("click", () => {
+        fields.projectId.value = generateUUID();
+        updateExecuteButtonState();
+      });
       document.getElementById("btnKey").addEventListener("click", () => run(storeApiKey));
       document.getElementById("btnExecute").addEventListener("click", () => run(executeCommand));
       document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
