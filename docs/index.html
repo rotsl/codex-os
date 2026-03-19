@@ -416,6 +416,89 @@
         font-size: 0.84rem;
       }
 
+      .rich-view {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.85);
+        border-radius: 12px;
+        padding: 0.85rem;
+        max-height: 320px;
+        overflow: auto;
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .terminal-view {
+        border: 1px solid rgba(0, 255, 156, 0.22);
+        background: #0b0f14;
+        color: #d7ffec;
+        border-radius: 12px;
+        padding: 0.75rem;
+        max-height: 340px;
+        overflow: auto;
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .terminal-entry {
+        border-left: 3px solid rgba(17, 167, 162, 0.7);
+        padding: 0.45rem 0.6rem;
+        border-radius: 8px;
+        background: rgba(13, 20, 28, 0.85);
+      }
+
+      .terminal-entry pre,
+      .terminal-entry code {
+        background: #0f1720;
+        color: #d7ffec;
+      }
+
+      .terminal-entry p,
+      .terminal-entry li,
+      .terminal-entry h4 {
+        color: #d7ffec;
+      }
+
+      .rich-markdown p,
+      .rich-markdown ul,
+      .rich-markdown h4 {
+        margin: 0.35rem 0;
+      }
+
+      .rich-code {
+        margin: 0;
+        border: 1px solid var(--line);
+        background: rgba(14, 24, 32, 0.96);
+        color: #e8fff5;
+        border-radius: 10px;
+        padding: 0.7rem;
+        overflow: auto;
+        font-family: "Space Mono", monospace;
+        font-size: 0.76rem;
+      }
+
+      .csv-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+      }
+
+      .csv-table th,
+      .csv-table td {
+        border: 1px solid var(--line);
+        padding: 0.35rem 0.45rem;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .csv-table th {
+        background: rgba(17, 167, 162, 0.12);
+      }
+
+      .empty-note {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
       .ok { color: var(--good); }
       .err { color: var(--bad); }
 
@@ -496,15 +579,11 @@
             Optional in MVP.
           </div>
 
-          <div class="two">
-            <div class="row">
-              <label for="projectId">Project ID</label>
-              <input id="projectId" readonly />
-            </div>
-            <div class="row">
-              <label for="projectName">Project Name</label>
-              <input id="projectName" placeholder="My Project" />
-            </div>
+          <input id="projectId" type="hidden" />
+
+          <div class="row">
+            <label for="projectName">Project Name</label>
+            <input id="projectName" placeholder="My Project" />
           </div>
 
           <div class="row">
@@ -587,19 +666,10 @@
 
         <article class="panel output">
           <h3 style="margin:0 0 0.6rem 0;">Latest Response</h3>
-          <pre id="result">{ "status": "idle" }</pre>
+          <div id="result" class="rich-view"></div>
 
           <h3 style="margin:1rem 0 0.6rem 0;">Agent Terminal</h3>
-          <pre id="terminal" style="
-  background:#0b0f14;
-  color:#00ff9c;
-  padding:12px;
-  border-radius:12px;
-  max-height:300px;
-  overflow:auto;
-  font-family:monospace;
-  font-size:12px;
-"></pre>
+          <div id="terminal" class="terminal-view"></div>
 
           <h3 style="margin:1rem 0 0.6rem 0;">Recent Commands</h3>
           <pre id="history">[]</pre>
@@ -649,10 +719,176 @@
         logEl.textContent = msg;
       }
 
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function tryParseJson(text) {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      }
+
+      function parseCsvRow(line) {
+        const out = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i += 1) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+              current += '"';
+              i += 1;
+            } else {
+              inQuotes = !inQuotes;
+            }
+            continue;
+          }
+          if (ch === "," && !inQuotes) {
+            out.push(current.trim());
+            current = "";
+            continue;
+          }
+          current += ch;
+        }
+
+        out.push(current.trim());
+        return out;
+      }
+
+      function isLikelyCsv(text) {
+        const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (lines.length < 2) return false;
+        if (!lines.every((line) => line.includes(","))) return false;
+        const widths = lines.map((line) => parseCsvRow(line).length);
+        return widths[0] > 1 && widths.every((w) => w === widths[0]);
+      }
+
+      function renderCsvTable(text) {
+        const rows = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(parseCsvRow);
+        if (!rows.length) return '<div class="empty-note">No CSV rows</div>';
+
+        const [header, ...body] = rows;
+        const headHtml = header.map((cell) => '<th>' + escapeHtml(cell) + '</th>').join("");
+        const bodyHtml = body.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("");
+        return '<table class="csv-table"><thead><tr>' + headHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody></table>';
+      }
+
+      function renderPlainTextAsMarkdown(text) {
+        const lines = text.split(/\r?\n/);
+        let html = "";
+        let inList = false;
+
+        const closeList = () => {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+        };
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line) {
+            closeList();
+            continue;
+          }
+
+          const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
+          if (headingMatch) {
+            closeList();
+            html += '<h4>' + escapeHtml(headingMatch[2]) + '</h4>';
+            continue;
+          }
+
+          const bulletMatch = line.match(/^[-*•]\s+(.*)$/);
+          if (bulletMatch) {
+            if (!inList) {
+              html += "<ul>";
+              inList = true;
+            }
+            html += '<li>' + escapeHtml(bulletMatch[1]) + '</li>';
+            continue;
+          }
+
+          closeList();
+          html += '<p>' + escapeHtml(line) + '</p>';
+        }
+
+        closeList();
+        return html || '<div class="empty-note">No text</div>';
+      }
+
+      function renderMarkdownWithCodeFences(text) {
+        const fenceRegex = /```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g;
+        let html = "";
+        let last = 0;
+        let match;
+
+        while ((match = fenceRegex.exec(text)) !== null) {
+          const before = text.slice(last, match.index);
+          if (before.trim()) {
+            html += '<div class="rich-markdown">' + renderPlainTextAsMarkdown(before) + '</div>';
+          }
+
+          html += '<pre class="rich-code"><code>' + escapeHtml(match[2]) + '</code></pre>';
+          last = match.index + match[0].length;
+        }
+
+        const after = text.slice(last);
+        if (after.trim()) {
+          html += '<div class="rich-markdown">' + renderPlainTextAsMarkdown(after) + '</div>';
+        }
+
+        return html || '<div class="empty-note">No content</div>';
+      }
+
+      function renderRichContent(value) {
+        if (value == null || value === "") {
+          return '<div class="empty-note">No output returned</div>';
+        }
+
+        if (typeof value === "object") {
+          return '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(value, null, 2)) + '</code></pre>';
+        }
+
+        const text = String(value).trim();
+        if (!text) {
+          return '<div class="empty-note">No output returned</div>';
+        }
+
+        if ((text.startsWith("{") || text.startsWith("[")) && tryParseJson(text) !== null) {
+          const jsonObj = tryParseJson(text);
+          return '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(jsonObj, null, 2)) + '</code></pre>';
+        }
+
+        if (isLikelyCsv(text)) {
+          return renderCsvTable(text);
+        }
+
+        return renderMarkdownWithCodeFences(text);
+      }
+
+      function setResultContent(content) {
+        if (!resultEl) return;
+        resultEl.innerHTML = renderRichContent(content);
+      }
+
       function logTerminal(msg) {
         const el = document.getElementById("terminal");
         if (!el) return;
-        el.textContent += msg + "\n";
+
+        const entry = document.createElement("div");
+        entry.className = "terminal-entry";
+        entry.innerHTML = renderRichContent(msg);
+        el.appendChild(entry);
         el.scrollTop = el.scrollHeight;
       }
 
@@ -765,11 +1001,10 @@
       }
 
       async function executeCommand() {
-        const url = `${normalizeBaseUrl()}/execute`;
+        const url = normalizeBaseUrl() + "/execute";
         const input = fields.inputText.value;
 
-        logTerminal(`
-=== EXECUTE ${fields.command.value} ===`);
+        logTerminal("=== EXECUTE " + fields.command.value + " ===");
 
         const res = await fetch(url, {
           method: "POST",
@@ -787,23 +1022,23 @@
         const data = await res.json();
 
         logTerminal("RAW RESPONSE:");
-        logTerminal(JSON.stringify(data, null, 2));
+        logTerminal(data);
         logTerminal("✔ response received");
 
         if (data.error) {
           logTerminal("✖ BACKEND ERROR:");
-          logTerminal(JSON.stringify(data, null, 2));
-          resultEl.textContent = "⚠️ " + data.error;
+          logTerminal(data);
+          setResultContent("⚠️ " + data.error);
           return;
         }
 
         const parsed = typeof data.response === "string"
-          ? JSON.parse(data.response)
+          ? (tryParseJson(data.response) || { output: data.response })
           : (data.response && typeof data.response === "object" ? data.response : data);
 
         const steps = parsed.steps || data.steps || [];
         if (steps.length) {
-          logTerminal("\n--- STEPS ---");
+          logTerminal("--- STEPS ---");
           steps.forEach((step) => {
             logTerminal("• " + step);
           });
@@ -811,26 +1046,27 @@
 
         const state = parsed.state || data.state;
         if (state) {
-          logTerminal("\n=== STATE: " + state + " ===");
+          logTerminal("STATE → " + state);
         }
 
-        if (!parsed.final) {
-          logTerminal("✖ Missing final output");
-          logTerminal(JSON.stringify(parsed, null, 2));
-          throw new Error("No final output from backend");
-        }
+        const finalOutput = parsed.final || parsed.output || data.final || data.output || "";
 
-        const finalOutput = parsed.final;
+        if (!finalOutput) {
+          logTerminal("✖ No final/output field found in backend response");
+          logTerminal(parsed);
+          setResultContent("⚠️ No output returned");
+          stateLabel.textContent = state || "UNKNOWN";
+          return;
+        }
 
         if (finalOutput.trim() === input.trim()) {
-          logTerminal("✖ Echo detected");
-          throw new Error("Model returned input instead of answer");
+          logTerminal("⚠ Echo-like output detected");
         }
 
-        logTerminal("\n=== FINAL OUTPUT ===");
+        logTerminal("FINAL OUTPUT:");
         logTerminal(finalOutput);
 
-        resultEl.textContent = finalOutput || "⚠️ No output returned";
+        setResultContent(finalOutput);
         stateLabel.textContent = state || "UNKNOWN";
       }
 
@@ -852,6 +1088,7 @@
         if (!fields.projectId.value) {
           fields.projectId.value = generateUUID();
         }
+        setResultContent({ status: "idle" });
         updateExecuteButtonState();
       });
 
@@ -864,7 +1101,7 @@
       document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
       document.getElementById("btnClear").onclick = () => {
         const terminal = document.getElementById("terminal");
-        if (terminal) terminal.textContent = "";
+        if (terminal) terminal.innerHTML = "";
       };
 
       providerEl.addEventListener("change", filterModelsByProvider);
