@@ -18,6 +18,11 @@ It does not replace Codex. It standardizes how Codex behaves in your repos.
   - plain text renders directly
   - code, markdown, JSON, and table-like content render as labeled artifacts
 
+
+## Custom GPT
+- **Codex OS**: [https://chatgpt.com/g/g-69bb21d374f08191ba1f8211c950678a-codex-os](https://chatgpt.com/g/g-69bb21d374f08191ba1f8211c950678a-codex-os)
+- A minimal, Codex-style engineering assistant with browsing, session context, and plugin-style roles. Based on Codex OS (minimal version of this repo).
+
 ## Before You Install (Important)
 Back up your current Codex folder first.
 
@@ -254,3 +259,18 @@ mv ~/.codex.backup.<timestamp> ~/.codex
 - Keep memory short and current.
 - Use `--context` and `--share` only when you need external project context.
 - Use chat for direct tasks; use `ro` when you want repeatable command workflows.
+
+---
+
+<div align="center">
+  <h3>Codex-OS</h3>
+  <p><code>autoload • memory • plugins • repeatable workflows</code></p>
+  <p>
+    <a href="https://rotsl.github.io/codex-os/">Live Site</a>
+    ·
+    <a href="https://github.com/rotsl/codex-os">GitHub</a>
+    ·
+    <a href="https://www.npmjs.com/package/codexospackage">npm</a>
+  </p>
+  <sub>Built for terminal, VS Code, and Codex chat.</sub>
+</div>
