@@ -564,6 +564,40 @@
       .ok { color: var(--good); }
       .err { color: var(--bad); }
 
+      .site-footer {
+        width: min(1120px, 92vw);
+        margin: 1.2rem auto 2rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        text-align: center;
+      }
+
+      .site-footer h3 {
+        margin: 0 0 0.25rem 0;
+        font-size: 1.05rem;
+      }
+
+      .site-footer p {
+        margin: 0.28rem 0;
+      }
+
+      .site-footer a {
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .site-footer code {
+        font-family: "Space Mono", monospace;
+      }
+
+      .site-footer sub {
+        color: var(--muted);
+      }
+
+
       @media (max-width: 980px) {
         .hero { grid-template-columns: 1fr; }
         .app { grid-template-columns: 1fr; }
