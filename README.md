@@ -11,6 +11,8 @@ It keeps your local project state separate, supports optional cross-project cont
 Codex-OS is a Codex-native operating layer made of markdown rules + a thin runner.
 It does not replace Codex. It standardizes how Codex behaves in your repos.
 
+Claude Code is also supported through a parallel thin runner and instruction layer, with a user-selectable memory mode.
+
 ## Hosted Frontend
 - Live site: https://rotsl.github.io/codex-os/
 - UI source: `docs/index.html`
@@ -39,6 +41,12 @@ From this repo root:
 ./install.sh
 ```
 
+For Claude Code, use the separate installer:
+
+```bash
+./installclaude.sh
+```
+
 What install wires:
 - `~/.codex/system -> <this repo>` (symlink)
 - `~/.local/bin/ro -> ~/.codex/system/ro`
@@ -47,6 +55,12 @@ What install wires:
 - creates missing `~/.codex/config.toml` (if absent)
 - creates missing `~/.codex/system/plugins/`
 - creates missing `~/.codex/system/plugin-registry.json`
+
+What `installclaude.sh` wires:
+- `~/.codex/system -> <this repo>` (shared system root)
+- `~/.local/bin/ro-claude -> ~/.codex/system/ro-claude`
+- `~/.claude/CLAUDE.md -> ~/.codex/system/claude/CLAUDE.md`
+- `~/.claude/agents/*.md -> ~/.codex/system/claude/agents/*.md`
 
 ## How It Wires Into Codex
 1. Codex loads `~/.codex/AGENTS.md` from your global config.
@@ -58,12 +72,36 @@ What install wires:
    - `memory/context.md`
    - `memory/decisions.md`
 
+## How It Wires Into Claude Code
+1. Claude Code loads `~/.claude/CLAUDE.md`.
+2. That file is symlinked to this repo’s Claude layer at `claude/CLAUDE.md`.
+3. Claude subagents are linked from `claude/agents/*.md` into `~/.claude/agents/`.
+4. `ro-claude` runs `claude -p` with project-aware prompt shaping.
+   - it uses the process working directory plus `--add-dir <project-root>` for workspace access
+5. The user chooses memory mode:
+   - `--memory-mode auto`: use `CLAUDE.md` and Claude Code auto-memory
+   - `--memory-mode deterministic`: use `memory/context.md` and `memory/decisions.md` as the deterministic store
+6. New repos auto-bootstrap on first `ro-claude` run:
+   - `CLAUDE.md`
+   - `memory/context.md` and `memory/decisions.md` only in deterministic mode
+
+Claude CLI prerequisite:
+- `ro-claude` assumes the local Claude CLI is already authenticated
+- if not, the live invocation fails with `Not logged in · Please run /login`
+
 ## Usage Matrix
 
 ### 1. Plain Terminal
 ```bash
 cd /path/to/project
 ro "build login API"
+```
+
+Claude:
+
+```bash
+cd /path/to/project
+ro-claude --memory-mode deterministic "build login API"
 ```
 
 ### 2. Terminal Inside a Python venv
@@ -118,6 +156,11 @@ ro analyze "task"
 ro --plugin sql-helper "optimize query"
 ro --context ../other-repo "reuse approach"
 ro --share ../other-repo "reuse logic safely"
+ro-claude --memory-mode auto "task"
+ro-claude --memory-mode deterministic "task"
+ro-claude build "task"
+ro-claude write "task"
+ro-claude analyze "task"
 ```
 
 Interactive mode:
@@ -144,7 +187,9 @@ Use it:
 
 ```bash
 codexos install
+codexos install-claude
 codexos ro "build login API"
+codexos claude --memory-mode auto "review this project"
 codexos doctor
 ```
 
@@ -181,6 +226,11 @@ Project-local by default:
 - `memory/context.md`
 - `memory/decisions.md`
 
+Claude memory mode choice:
+- `auto`: rely on `CLAUDE.md` plus Claude Code auto-memory
+- `deterministic`: rely on `memory/context.md` and `memory/decisions.md`, loaded explicitly by `ro-claude`
+- set default with `RO_CLAUDE_MEMORY_MODE=auto` or `RO_CLAUDE_MEMORY_MODE=deterministic`
+
 Optional shared context:
 - `--context` reads summary from another local repo (on demand)
 - `--share` writes isolated `memory/shared_<hash>.md` files
@@ -195,13 +245,16 @@ Optional global memory:
 ### Root
 - `AGENTS.md`: main orchestrator and mode contracts.
 - `ro`: thin CLI wrapper around `codex exec`.
+- `ro-claude`: thin CLI wrapper around `claude -p` with selectable memory mode.
 - `install.sh`: global setup and wiring script.
+- `installclaude.sh`: Claude-only setup and wiring script.
 - `README.md`: user guide.
 - `LICENSE`: license terms.
 - `.gitignore`: repo hygiene.
 - `docs/index.html`: GitHub Pages frontend UI.
 - `docs/.nojekyll`: prevents Jekyll processing on Pages.
 - `plugin-registry.json`: default plugin registry seed.
+- `claude/`: Claude Code global instructions and subagents.
 
 ### agents/
 - `planner.md`: compact planning behavior.
@@ -258,6 +311,8 @@ mv ~/.codex.backup.<timestamp> ~/.codex
 - Keep rules in rules/ and skills in skills/; avoid duplication.
 - Keep memory short and current.
 - Use `--context` and `--share` only when you need external project context.
+- `ro-claude`: thin CLI wrapper around `claude -p` with selectable memory mode.
+- live-tested against a local Claude CLI that supports `-p` and `--append-system-prompt` but not `--cwd`.
 - Use chat for direct tasks; use `ro` when you want repeatable command workflows.
 
 ---

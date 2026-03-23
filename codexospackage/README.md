@@ -13,7 +13,8 @@ MIT
 - on `npm install -g`, auto-bootstraps by cloning `https://github.com/rotsl/codex-os` to `~/.codex/codex-os` (if missing)
 - runs Codex-OS `install.sh` automatically during package postinstall
 - proxies `ro` command after setup
-- provides `doctor` check for repo, `ro`, and `codex` shim
+- proxies `ro-claude` command after setup
+- provides `doctor` check for repo, `ro`, `ro-claude`, and `codex` shim
 
 ## Install
 Global install (auto bootstrap):
@@ -35,6 +36,12 @@ Install/repair wiring manually:
 codexos install
 ```
 
+Install/repair Claude wiring manually:
+
+```bash
+codexos install-claude
+```
+
 Use a specific local clone:
 
 ```bash
@@ -45,6 +52,12 @@ Run a task:
 
 ```bash
 codexos ro "build login API"
+```
+
+Run a Claude task:
+
+```bash
+codexos claude --memory-mode auto "review this project"
 ```
 
 Check setup:

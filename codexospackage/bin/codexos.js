@@ -13,13 +13,16 @@ function usage() {
 
 Usage:
   codexos install [--repo <path>]
+  codexos install-claude [--repo <path>]
   codexos ro <args...>
+  codexos claude <args...>
   codexos doctor
   codexos help
 
 Notes:
   - install clones ${REPO_URL} to ${DEFAULT_REPO} when needed.
-  - install runs install.sh to wire Codex-OS globally.
+  - install runs install.sh for Codex wiring.
+  - install-claude runs installclaude.sh for Claude wiring.
   - ro proxies to ~/.local/bin/ro after install.
 `);
 }
@@ -104,6 +107,12 @@ if (sub === "install") {
   process.exit(0);
 }
 
+if (sub === "install-claude") {
+  const repo = resolveInstallRepo(args.slice(1));
+  runChecked("bash", [path.join(repo, "installclaude.sh")], { cwd: repo });
+  process.exit(0);
+}
+
 if (sub === "ro") {
   const roPath = path.join(os.homedir(), ".local", "bin", "ro");
   if (!fs.existsSync(roPath)) {
@@ -113,13 +122,24 @@ if (sub === "ro") {
   process.exit(0);
 }
 
+if (sub === "claude") {
+  const roClaudePath = path.join(os.homedir(), ".local", "bin", "ro-claude");
+  if (!fs.existsSync(roClaudePath)) {
+    fail("ro-claude not found at ~/.local/bin/ro-claude. Run: codexos install-claude");
+  }
+  runChecked(roClaudePath, args.slice(1));
+  process.exit(0);
+}
+
 if (sub === "doctor") {
   const roPath = path.join(os.homedir(), ".local", "bin", "ro");
+  const roClaudePath = path.join(os.homedir(), ".local", "bin", "ro-claude");
   const codexPath = path.join(os.homedir(), ".local", "bin", "codex");
   const repoPath = fs.existsSync(path.join(DEFAULT_REPO, "install.sh")) ? DEFAULT_REPO : "missing";
 
   console.log(`repo: ${repoPath}`);
   console.log(`ro: ${fs.existsSync(roPath) ? roPath : "missing"}`);
+  console.log(`ro-claude: ${fs.existsSync(roClaudePath) ? roClaudePath : "missing"}`);
   console.log(`codex shim: ${fs.existsSync(codexPath) ? codexPath : "missing"}`);
   process.exit(0);
 }

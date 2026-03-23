@@ -89,7 +89,7 @@ model_instructions_file = "~/.codex/AGENTS.md"
 EOF
 fi
 
-echo "Setup complete."
+echo "Codex setup complete."
 
 if command -v ro >/dev/null 2>&1; then
   echo "ro is available at: $(command -v ro)"
