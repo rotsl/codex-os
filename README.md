@@ -47,6 +47,20 @@ For Claude Code, use the separate installer:
 ./installclaude.sh
 ```
 
+Both installers now ask whether the install is for:
+- `this repo only`
+- `systemwide`
+
+Repo-only mode:
+- keeps usage local to this checkout
+- does not change `~/.codex`, `~/.claude`, or your PATH
+- lets you run `./ro` or `./ro-claude` directly from this repo
+
+Systemwide mode:
+- shows backup and restore commands before changing any global settings
+- proceeds only if you type `Accept`
+- cancels with a `^C`-style exit if you choose `Decline`
+
 What install wires:
 - `~/.codex/system -> <this repo>` (symlink)
 - `~/.local/bin/ro -> ~/.codex/system/ro`
@@ -61,6 +75,14 @@ What `installclaude.sh` wires:
 - `~/.local/bin/ro-claude -> ~/.codex/system/ro-claude`
 - `~/.claude/CLAUDE.md -> ~/.codex/system/claude/CLAUDE.md`
 - `~/.claude/agents/*.md -> ~/.codex/system/claude/agents/*.md`
+
+Systemwide backup prompts:
+- Codex install shows:
+  - backup: `cp -R ~/.codex ~/.codex.backup.$(date +%Y%m%d%H%M%S)`
+  - restore: `mv ~/.codex.backup.<timestamp> ~/.codex`
+- Claude install shows:
+  - backup: `cp -R ~/.claude ~/.claude.backup.$(date +%Y%m%d%H%M%S)`
+  - restore: `mv ~/.claude.backup.<timestamp> ~/.claude`
 
 ## How It Wires Into Codex
 1. Codex loads `~/.codex/AGENTS.md` from your global config.

@@ -2,7 +2,68 @@
 
 set -e
 
+prompt_install_scope() {
+  while true; do
+    cat <<'EOF'
+Choose install scope for Codex-OS:
+  1) this repo only
+  2) systemwide
+  3) decline
+EOF
+    read -r -p "Enter 1, 2, or 3: " scope_choice
+    case "$scope_choice" in
+      1) INSTALL_SCOPE="repo"; return ;;
+      2) INSTALL_SCOPE="systemwide"; return ;;
+      3)
+        printf '^C\n'
+        exit 130
+        ;;
+      *) echo "Invalid choice. Please enter 1, 2, or 3." ;;
+    esac
+  done
+}
+
+confirm_systemwide_install() {
+  local backup_cmd='cp -R ~/.codex ~/.codex.backup.$(date +%Y%m%d%H%M%S)'
+  local restore_cmd='mv ~/.codex.backup.<timestamp> ~/.codex'
+
+  cat <<EOF
+Systemwide install selected.
+
+Backup your settings with:
+  ${backup_cmd}
+
+Retrieve them with:
+  ${restore_cmd}
+EOF
+
+  read -r -p "Type Accept to proceed or Decline to cancel: " decision
+  case "$decision" in
+    Accept) ;;
+    Decline)
+      printf '^C\n'
+      exit 130
+      ;;
+    *)
+      echo "Install cancelled. Type Accept exactly to proceed."
+      printf '^C\n'
+      exit 130
+      ;;
+  esac
+}
+
 echo "Setting up Codex-OS..."
+
+prompt_install_scope
+
+if [ "$INSTALL_SCOPE" = "repo" ]; then
+  chmod +x ./ro
+  echo "Repo-only setup complete."
+  echo "Use ./ro from this repository. No global Codex settings were changed."
+  exit 0
+fi
+
+confirm_systemwide_install
 
 mkdir -p ~/.codex
 

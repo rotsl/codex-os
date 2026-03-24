@@ -36,6 +36,9 @@ Install/repair wiring manually:
 codexos install
 ```
 
+The installer will ask whether the setup is for this repo only or systemwide.
+If you choose systemwide, it will show backup and restore commands and proceed only after you type `Accept`.
+
 Install/repair Claude wiring manually:
 
 ```bash
