@@ -1,5 +1,7 @@
 # Codex-OS
 
+Languages: [English](./README.md) | [中文](./README.zh-CN.md) | [Français](./README.fr.md) | [Deutsch](./README.de.md)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.2](https://img.shields.io/badge/codexospackage-0.0.2-informational)](https://www.npmjs.com/package/codexospackage/v/0.0.2) [![npm version](https://img.shields.io/npm/v/codexospackage.svg)](https://www.npmjs.com/package/codexospackage/v/0.0.2) [![Live Demo](https://img.shields.io/badge/Live%20Demo-rotsl.github.io%2Fcodex--os-0aa?logo=githubpages&logoColor=white)](https://rotsl.github.io/codex-os/)
 
 ## Why This Exists
