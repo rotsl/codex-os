@@ -806,13 +806,14 @@
         inputText: document.getElementById("inputText")
       };
 
+      const BACKEND_PLACEHOLDER = "__BACKEND" + "_BASE_URL__";
       const DEFAULT_API = "__BACKEND_BASE_URL__";
 
       function normalizeBaseUrl() {
         const queryApi = new URLSearchParams(window.location.search).get("api");
         const configured = (queryApi || DEFAULT_API || "").trim();
 
-        if (!configured || configured === "__BACKEND_BASE_URL__") {
+        if (!configured || configured === BACKEND_PLACEHOLDER) {
           throw new Error("Backend base URL is not configured.");
         }
 
