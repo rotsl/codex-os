@@ -32,10 +32,10 @@ jobs:
 
       - name: Prepare Pages Artifact
         env:
-          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
+          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL || vars.BACKEND_BASE_URL }}
         run: |
           if [ -z "${BACKEND_BASE_URL:-}" ]; then
-            echo "BACKEND_BASE_URL secret is missing"
+            echo "BACKEND_BASE_URL secret/variable is missing"
             exit 1
           fi
 
