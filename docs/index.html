@@ -809,7 +809,14 @@
       const DEFAULT_API = "__BACKEND_BASE_URL__";
 
       function normalizeBaseUrl() {
-        return DEFAULT_API;
+        const queryApi = new URLSearchParams(window.location.search).get("api");
+        const configured = (queryApi || DEFAULT_API || "").trim();
+
+        if (!configured || configured === "__BACKEND_BASE_URL__") {
+          throw new Error("Backend base URL is not configured.");
+        }
+
+        return configured.replace(/\/+$/, "");
       }
 
       function generateUUID() {
@@ -845,6 +852,28 @@
         } catch {
           return null;
         }
+      }
+
+      async function readJsonResponse(res) {
+        const rawText = await res.text();
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        const parsed = tryParseJson(rawText);
+
+        if (parsed !== null) {
+          return parsed;
+        }
+
+        if (contentType.includes("text/html") || rawText.trim().startsWith("<")) {
+          const titleMatch = rawText.match(/<title>(.*?)<\/title>/i);
+          const title = titleMatch ? ` ${titleMatch[1]}` : "";
+          throw new Error(`Backend returned HTML instead of JSON.${title}`.trim());
+        }
+
+        if (!rawText.trim()) {
+          return {};
+        }
+
+        throw new Error("Backend returned invalid JSON.");
       }
 
       function parseCsvRow(line) {
@@ -1125,7 +1154,10 @@
           body: body ? JSON.stringify(body) : null
         });
 
-        const data = await res.json().catch(() => ({}));
+        const data = await readJsonResponse(res).catch((error) => {
+          logTerminal(`✖ ERROR: ${error.message}`);
+          throw error;
+        });
 
         if (!res.ok) {
           const msg = data.error || data.detail || res.status;
@@ -1204,7 +1236,7 @@
           })
         });
 
-        const data = await res.json();
+        const data = await readJsonResponse(res);
 
         logTerminal("RAW RESPONSE:");
         logTerminal(data);
