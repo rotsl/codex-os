@@ -9,7 +9,7 @@ const REPO_URL = "https://github.com/rotsl/codex-os.git";
 const DEFAULT_REPO = path.join(os.homedir(), ".codex", "codex-os");
 
 function usage() {
-  console.log(`codexospackage v0.0.1
+  console.log(`codexospackage v0.0.2
 
 Usage:
   codexos install [--repo <path>]

@@ -1,6 +1,6 @@
 {
   "name": "codexospackage",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Codex-OS npm wrapper for installing and running the Codex-native workflow system from a cloned repository.",
   "license": "MIT",
   "keywords": [

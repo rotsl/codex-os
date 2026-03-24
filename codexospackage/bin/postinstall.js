@@ -35,7 +35,14 @@ try {
     run("git", ["clone", "--depth", "1", REPO_URL, TARGET]);
   }
 
-  run("bash", [path.join(TARGET, "install.sh")], { cwd: TARGET });
+  run("bash", [path.join(TARGET, "install.sh")], {
+    cwd: TARGET,
+    env: {
+      ...process.env,
+      CODEXOS_INSTALL_SCOPE: "systemwide",
+      CODEXOS_INSTALL_ACCEPT: "Accept",
+    },
+  });
   console.log("[codexospackage] bootstrap complete");
 } catch (err) {
   console.error(`[codexospackage] postinstall failed: ${err.message}`);

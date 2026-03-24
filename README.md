@@ -1,6 +1,6 @@
 # Codex-OS
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.1](https://img.shields.io/badge/codexospackage-0.0.1-informational)](./codexospackage/package.json) [![npm version](https://img.shields.io/npm/v/codexospackage.svg)](https://www.npmjs.com/package/codexospackage) [![Live Demo](https://img.shields.io/badge/Live%20Demo-rotsl.github.io%2Fcodex--os-0aa?logo=githubpages&logoColor=white)](https://rotsl.github.io/codex-os/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![GitHub Repo](https://img.shields.io/badge/GitHub-rotsl%2Fcodex--os-181717?logo=github)](https://github.com/rotsl/codex-os) [![Node >=18](https://img.shields.io/badge/Node-%3E%3D18-339933?logo=node.js&logoColor=white)](./codexospackage/package.json) [![codexospackage 0.0.2](https://img.shields.io/badge/codexospackage-0.0.2-informational)](https://www.npmjs.com/package/codexospackage/v/0.0.2) [![npm version](https://img.shields.io/npm/v/codexospackage.svg)](https://www.npmjs.com/package/codexospackage/v/0.0.2) [![Live Demo](https://img.shields.io/badge/Live%20Demo-rotsl.github.io%2Fcodex--os-0aa?logo=githubpages&logoColor=white)](https://rotsl.github.io/codex-os/)
 
 ## Why This Exists
 Most people end up repeating the same setup in every repo: prompts, memory notes, and run habits.
@@ -16,6 +16,7 @@ Claude Code is also supported through a parallel thin runner and instruction lay
 ## Hosted Frontend
 - Live site: https://rotsl.github.io/codex-os/
 - UI source: `docs/index.html`
+- Deployment workflow: `.github/workflows/pages.yml`
 - Output rendering is type-aware:
   - plain text renders directly
   - code, markdown, JSON, and table-like content render as labeled artifacts
@@ -60,6 +61,7 @@ Systemwide mode:
 - shows backup and restore commands before changing any global settings
 - proceeds only if you type `Accept`
 - cancels with a `^C`-style exit if you choose `Decline`
+- supports `CODEXOS_INSTALL_SCOPE=systemwide CODEXOS_INSTALL_ACCEPT=Accept` for non-interactive bootstrap paths
 
 What install wires:
 - `~/.codex/system -> <this repo>` (symlink)
@@ -194,7 +196,7 @@ ro
 # ro > exit
 ```
 
-## npm Package: codexospackage (v0.0.1)
+## npm Package: codexospackage (v0.0.2)
 A packaged wrapper is available in `codexospackage/`.
 
 Global install with auto bootstrap:
@@ -204,6 +206,8 @@ npm install -g ./codexospackage
 ```
 
 This install now auto-clones `https://github.com/rotsl/codex-os` to `~/.codex/codex-os` (if missing) and runs `install.sh`.
+It preserves the current CLI behavior and adds the newer Claude install and launcher commands exposed by the wrapper.
+The package postinstall uses the non-interactive systemwide path so `npm install -g` continues to work.
 
 Use it:
 
@@ -274,7 +278,7 @@ Optional global memory:
 - `LICENSE`: license terms.
 - `.gitignore`: repo hygiene.
 - `docs/index.html`: GitHub Pages frontend UI.
-- `docs/.nojekyll`: prevents Jekyll processing on Pages.
+- `.github/workflows/pages.yml`: GitHub Pages deployment workflow for `docs/`.
 - `plugin-registry.json`: default plugin registry seed.
 - `claude/`: Claude Code global instructions and subagents.
 
@@ -323,6 +327,12 @@ mv ~/.codex.backup.<timestamp> ~/.codex
 
 
 ## Changelog
+### v0.0.2 — March 24, 2026
+- Bumped `codexospackage` to `v0.0.2`.
+- Added Claude Code support with `ro-claude`, `claude/`, and `installclaude.sh`.
+- Added installer scope prompts for repo-only vs systemwide setup with explicit backup confirmation.
+- Refreshed docs site copy to reflect Codex and Claude support.
+
 ### v0.0.1 — March 18, 2026
 - Initial GitHub release: `v0.0.1`.
 - Added Codex-OS orchestrator, agents, skills, rules, contexts, and memory system.

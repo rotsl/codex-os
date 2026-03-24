@@ -23,6 +23,8 @@ Global install (auto bootstrap):
 npm install -g ./codexospackage
 ```
 
+This postinstall path stays non-interactive and uses the systemwide install flow automatically so global npm installs do not hang on the new scope prompt.
+
 If you want to skip auto bootstrap during install:
 
 ```bash

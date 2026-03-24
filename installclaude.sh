@@ -3,6 +3,19 @@
 set -e
 
 prompt_install_scope() {
+  if [ -n "${CODEXOS_INSTALL_SCOPE:-}" ]; then
+    case "$CODEXOS_INSTALL_SCOPE" in
+      repo|systemwide)
+        INSTALL_SCOPE="$CODEXOS_INSTALL_SCOPE"
+        return
+        ;;
+      *)
+        echo "Invalid CODEXOS_INSTALL_SCOPE: $CODEXOS_INSTALL_SCOPE"
+        exit 1
+        ;;
+    esac
+  fi
+
   while true; do
     cat <<'EOF'
 Choose install scope for Codex-OS Claude support:
@@ -26,6 +39,10 @@ EOF
 confirm_systemwide_install() {
   local backup_cmd='cp -R ~/.claude ~/.claude.backup.$(date +%Y%m%d%H%M%S)'
   local restore_cmd='mv ~/.claude.backup.<timestamp> ~/.claude'
+
+  if [ "${CODEXOS_INSTALL_ACCEPT:-}" = "Accept" ]; then
+    return
+  fi
 
   cat <<EOF
 Systemwide Claude install selected.
