@@ -1,0 +1,55 @@
+name: Deploy Docs Site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Prepare Pages Artifact
+        env:
+          BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL || vars.BACKEND_BASE_URL }}
+        run: |
+          if [ -z "${BACKEND_BASE_URL:-}" ]; then
+            echo "BACKEND_BASE_URL secret/variable is missing"
+            exit 1
+          fi
+
+          mkdir -p .pages
+          cp -R docs/. .pages/
+
+          sed "s|__BACKEND_BASE_URL__|${BACKEND_BASE_URL}|g" .pages/index.html > .pages/index.html.tmp
+          mv .pages/index.html.tmp .pages/index.html
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .pages
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

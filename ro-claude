@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+"""Thin Claude wrapper with optional deterministic memory loading."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+PROJECT_TYPES = {"frontend", "backend", "writing", "general"}
+GLOBAL_CLAUDE_DIR = Path.home() / ".claude"
+GLOBAL_MEMORY_PATH = GLOBAL_CLAUDE_DIR / "global_memory.md"
+
+CLAUDE_EXECUTABLE: str | None = None
+
+PROJECT_PROMPT_APPEND = {
+    "frontend": "Focus on UI, components, and user experience. Keep code modular.",
+    "backend": "Focus on APIs, data flow, and reliability. Ensure correctness and structure.",
+    "writing": "Focus on clarity, readability, and human tone.",
+    "general": "",
+}
+
+DEFAULT_PROJECT_CLAUDE = """# Project Claude Loader
+
+This project uses the global Codex-OS Claude layer from `~/.claude/CLAUDE.md`.
+
+## Local Notes
+- Add only project-specific Claude constraints here.
+- Keep shared behavior in the global Claude layer and system files.
+"""
+
+DEFAULT_MEMORY_CONTEXT = """# Persistent Context Memory
+
+## Current State
+- project bootstrapped automatically by `ro-claude`
+
+## Active Constraints
+- none yet
+
+## Current Goals
+- none yet
+
+## In Progress
+- none
+
+## Still Relevant
+- keep updates concise and durable
+"""
+
+DEFAULT_MEMORY_DECISIONS = """# Persistent Decision Memory
+
+## Durable Decisions
+- none yet
+
+## Reusable Patterns
+- none yet
+
+## Long-Term Constraints
+- none yet
+"""
+
+
+def resolve_claude_executable() -> str:
+    global CLAUDE_EXECUTABLE
+    if CLAUDE_EXECUTABLE:
+        return CLAUDE_EXECUTABLE
+
+    env_override = os.environ.get("RO_CLAUDE_BIN") or os.environ.get("CLAUDE_BIN")
+    if env_override:
+        candidate = Path(env_override).expanduser()
+        if candidate.is_file():
+            CLAUDE_EXECUTABLE = str(candidate)
+            return CLAUDE_EXECUTABLE
+
+    which = shutil.which("claude")
+    if which:
+        CLAUDE_EXECUTABLE = which
+        return CLAUDE_EXECUTABLE
+
+    fallback_candidates = [
+        Path.home() / ".local" / "bin" / "claude",
+        Path.home() / ".npm-global" / "bin" / "claude",
+        Path("/usr/local/bin/claude"),
+        Path("/opt/homebrew/bin/claude"),
+    ]
+    for candidate in fallback_candidates:
+        if candidate.is_file():
+            CLAUDE_EXECUTABLE = str(candidate)
+            return CLAUDE_EXECUTABLE
+
+    raise SystemExit(
+        "Claude CLI binary not found. Install Claude Code or set RO_CLAUDE_BIN=/absolute/path/to/claude."
+    )
+
+
+def summarize_text(text: str, max_lines: int = 6, max_chars: int = 700) -> str:
+    lines: list[str] = []
+    for raw in text.splitlines():
+        ln = re.sub(r"\s+", " ", raw.strip())
+        if not ln:
+            continue
+        if ln.startswith("#"):
+            continue
+        if ln.lower().startswith("updated:"):
+            continue
+        lines.append(ln)
+
+    if not lines:
+        return ""
+
+    out: list[str] = []
+    total = 0
+    for ln in lines:
+        item = ln[:140]
+        if len(item) > 2 and not item.startswith("-"):
+            item = f"- {item}"
+        if total + len(item) + 1 > max_chars:
+            break
+        out.append(item)
+        total += len(item) + 1
+        if len(out) >= max_lines:
+            break
+
+    return "\n".join(out)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="ro-claude",
+        description="Claude wrapper with project-aware prompting and selectable memory mode.",
+    )
+    parser.add_argument(
+        "parts",
+        nargs="*",
+        help='Examples: ro-claude "task" | ro-claude build "task" | ro-claude write "task" | ro-claude analyze "task"',
+    )
+    parser.add_argument("--dry-run", action="store_true", help="Print resolved execution plan without running Claude")
+    parser.add_argument(
+        "--memory-mode",
+        choices=("auto", "deterministic"),
+        default=os.environ.get("RO_CLAUDE_MEMORY_MODE", "deterministic"),
+        help="Use Claude-native CLAUDE.md + auto-memory, or load memory/context.md and memory/decisions.md explicitly.",
+    )
+    parser.add_argument("--context", help="Optional local project/path for on-demand context summary")
+    parser.add_argument("--share", help="Optional local project/path to create isolated shared memory from")
+    return parser.parse_args()
+
+
+def find_project_root(start: Path) -> Path:
+    here = start.resolve()
+    for candidate in [here, *here.parents]:
+        if (candidate / "CLAUDE.md").is_file() or (candidate / "AGENTS.md").is_file():
+            return candidate
+
+    git_proc = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=here,
+        text=True,
+        capture_output=True,
+    )
+    if git_proc.returncode == 0:
+        git_root = Path(git_proc.stdout.strip()).expanduser()
+        if git_root.exists():
+            return git_root.resolve()
+
+    return here
+
+
+def ensure_project_bootstrap(root: Path, memory_mode: str) -> None:
+    claude_file = root / "CLAUDE.md"
+    if not claude_file.exists():
+        claude_file.write_text(DEFAULT_PROJECT_CLAUDE.rstrip() + "\n", encoding="utf-8")
+
+    if memory_mode != "deterministic":
+        return
+
+    memory_dir = root / "memory"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+
+    context_file = memory_dir / "context.md"
+    if not context_file.exists():
+        context_file.write_text(DEFAULT_MEMORY_CONTEXT.rstrip() + "\n", encoding="utf-8")
+
+    decisions_file = memory_dir / "decisions.md"
+    if not decisions_file.exists():
+        decisions_file.write_text(DEFAULT_MEMORY_DECISIONS.rstrip() + "\n", encoding="utf-8")
+
+
+def reject_remote_reference(ref: str) -> None:
+    lower = ref.strip().lower()
+    if lower.startswith(("http://", "https://", "ssh://", "git@")):
+        raise SystemExit("Remote repositories are not auto-loaded for context/share. Pass a local path/repo instead.")
+
+
+def resolve_local_reference(ref: str, current_root: Path) -> Path:
+    reject_remote_reference(ref)
+
+    raw = Path(ref).expanduser()
+    candidates: list[Path] = []
+
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append((Path.cwd() / raw).resolve())
+        candidates.append((current_root / raw).resolve())
+        candidates.append((Path.home() / "projects" / raw).resolve())
+        candidates.append((Path.home() / "codex" / raw).resolve())
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise SystemExit(f"Reference not found locally: {ref}")
+
+
+def read_memory_project_type(root: Path) -> str | None:
+    memory_path = root / "memory" / "context.md"
+    if not memory_path.exists():
+        return None
+
+    text = memory_path.read_text(encoding="utf-8")
+    match = re.search(r"detected project type:\s*(frontend|backend|writing|general)", text, re.IGNORECASE)
+    if match:
+        return match.group(1).lower()
+
+    return None
+
+
+def detect_project_type(root: Path) -> str:
+    memory_hint = read_memory_project_type(root)
+
+    package_json = root / "package.json"
+    package_deps = set()
+    if package_json.exists():
+        try:
+            pkg = json.loads(package_json.read_text(encoding="utf-8"))
+            for section in ("dependencies", "devDependencies", "peerDependencies"):
+                deps = pkg.get(section, {})
+                if isinstance(deps, dict):
+                    package_deps.update(deps.keys())
+        except Exception:
+            pass
+
+    if package_deps.intersection({"react", "next", "vite", "vue"}) or (root / "src" / "components").is_dir():
+        return "frontend"
+
+    if (
+        package_deps.intersection({"express", "fastify"})
+        or (root / "requirements.txt").is_file()
+        or (root / "pyproject.toml").is_file()
+        or (root / "api").is_dir()
+        or (root / "routes").is_dir()
+    ):
+        return "backend"
+
+    if (root / "docs").is_dir():
+        return "writing"
+
+    md_count = 0
+    total_count = 0
+    skip_dirs = {".git", "node_modules", "dist", "build", "tmp", "temp", ".vscode", ".idea", "__pycache__"}
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in skip_dirs for part in path.parts):
+            continue
+        total_count += 1
+        if path.suffix.lower() == ".md":
+            md_count += 1
+
+    if total_count > 0 and md_count / total_count >= 0.6:
+        return "writing"
+
+    if memory_hint in PROJECT_TYPES:
+        return memory_hint
+
+    return "general"
+
+
+def update_memory_context(root: Path, project_type: str) -> None:
+    memory_path = root / "memory" / "context.md"
+    if not memory_path.exists():
+        return
+
+    text = memory_path.read_text(encoding="utf-8")
+    line = f"- detected project type: {project_type}"
+
+    if re.search(r"- detected project type:\s*(frontend|backend|writing|general)", text, re.IGNORECASE):
+        next_text = re.sub(
+            r"- detected project type:\s*(frontend|backend|writing|general)",
+            line,
+            text,
+            flags=re.IGNORECASE,
+        )
+    else:
+        if "## Current State" in text:
+            next_text = text.replace("## Current State\n", f"## Current State\n{line}\n", 1)
+        else:
+            next_text = f"{text.rstrip()}\n\n## Current State\n{line}\n"
+
+    if next_text != text:
+        memory_path.write_text(next_text, encoding="utf-8")
+
+
+def resolve_memory_files(ref: str, current_root: Path) -> tuple[Path, Path | None, Path]:
+    target = resolve_local_reference(ref, current_root)
+
+    if target.is_file():
+        context_file = target
+        decisions_file = None
+        source_root = target.parent
+    else:
+        context_file = target / "memory" / "context.md"
+        decisions_file = target / "memory" / "decisions.md"
+        source_root = target
+
+    if not context_file.is_file():
+        raise SystemExit(f"Context file not found: {context_file}")
+
+    if decisions_file is not None and not decisions_file.is_file():
+        decisions_file = None
+
+    return context_file, decisions_file, source_root
+
+
+def load_context_summary(context_arg: str | None, current_root: Path) -> tuple[str, str]:
+    if not context_arg:
+        return "", ""
+
+    context_file, _, _ = resolve_memory_files(context_arg, current_root)
+    text = context_file.read_text(encoding="utf-8")
+    summary = summarize_text(text, max_lines=6, max_chars=650)
+    if not summary:
+        return "", str(context_file)
+
+    block = (
+        f"Cross-project context (requested from {context_file}):\n"
+        f"{summary}\n"
+        "Use only if relevant."
+    )
+    return block, str(context_file)
+
+
+def create_or_update_shared_memory(share_arg: str | None, current_root: Path) -> tuple[str, str, str]:
+    if not share_arg:
+        return "", "", ""
+
+    context_file, decisions_file, source_root = resolve_memory_files(share_arg, current_root)
+
+    context_text = context_file.read_text(encoding="utf-8")
+    context_summary = summarize_text(context_text, max_lines=6, max_chars=700)
+
+    decisions_summary = ""
+    if decisions_file is not None:
+        decisions_text = decisions_file.read_text(encoding="utf-8")
+        decisions_summary = summarize_text(decisions_text, max_lines=6, max_chars=700)
+
+    source_ref = str(source_root.resolve())
+    share_hash = hashlib.sha1(source_ref.encode("utf-8")).hexdigest()[:10]
+    shared_file = current_root / "memory" / f"shared_{share_hash}.md"
+    shared_file.parent.mkdir(parents=True, exist_ok=True)
+
+    update_text = (
+        "# Shared Memory\n\n"
+        f"source: {source_ref}\n\n"
+        "## Context Summary\n"
+        f"{context_summary or '- (none)'}\n\n"
+        "## Decisions Summary\n"
+        f"{decisions_summary or '- (none)'}\n"
+    )
+    shared_file.write_text(update_text, encoding="utf-8")
+
+    block = (
+        f"Shared memory (explicitly loaded from {source_ref}; isolated file {shared_file.name}):\n"
+        f"Context:\n{context_summary or '- (none)'}\n"
+        f"Decisions:\n{decisions_summary or '- (none)'}\n"
+        "Use as optional reference only."
+    )
+    return block, source_ref, str(shared_file)
+
+
+def load_global_memory_summary(memory_mode: str) -> tuple[str, bool]:
+    if memory_mode != "deterministic":
+        return "", False
+
+    if not GLOBAL_MEMORY_PATH.is_file():
+        return "", False
+
+    text = GLOBAL_MEMORY_PATH.read_text(encoding="utf-8")
+    summary = summarize_text(text, max_lines=5, max_chars=450)
+    if not summary:
+        return "", True
+
+    block = (
+        "Global memory snippet (optional reusable preferences/patterns; project memory stays primary):\n"
+        f"{summary}"
+    )
+    return block, True
+
+
+def parse_mode_and_prompt(parts: list[str]) -> tuple[str, str, str | None]:
+    commands = {"auto", "build", "write", "analyze"}
+
+    if len(parts) >= 2 and parts[0] in commands:
+        command = parts[0]
+        prompt = " ".join(parts[1:]).strip()
+    else:
+        command = "auto"
+        prompt = " ".join(parts).strip()
+
+    if not prompt:
+        raise SystemExit("Prompt is required.")
+
+    forced_mode = None
+    if command == "build":
+        forced_mode = "coding"
+    elif command == "write":
+        forced_mode = "writing"
+    elif command == "analyze":
+        forced_mode = "analysis/planning"
+
+    return command, prompt, forced_mode
+
+
+def build_task_prompt(
+    base_prompt: str,
+    project_type: str,
+    forced_mode: str | None,
+    memory_mode: str,
+    context_block: str,
+    shared_block: str,
+    global_memory_block: str,
+) -> str:
+    parts = [base_prompt.strip()]
+
+    if forced_mode == "coding":
+        parts.append("Treat this as a coding task.")
+    elif forced_mode == "writing":
+        parts.append("Treat this as a writing task.")
+    elif forced_mode == "analysis/planning":
+        parts.append("Treat this as an analysis and planning task.")
+
+    addendum = PROJECT_PROMPT_APPEND.get(project_type, "")
+    if addendum:
+        parts.append(addendum)
+
+    if memory_mode == "auto":
+        parts.append(
+            "Use the repository's CLAUDE.md and Claude Code auto-memory as the primary memory mechanism for this task."
+        )
+    else:
+        parts.append(
+            "Use memory/context.md and memory/decisions.md as the deterministic memory store for this task."
+        )
+        if context_block:
+            parts.append(context_block)
+        if shared_block:
+            parts.append(shared_block)
+        if global_memory_block:
+            parts.append(global_memory_block)
+
+    return "\n\n".join(p for p in parts if p)
+
+
+def build_system_append(root: Path, memory_mode: str) -> str:
+    parts = [
+        f"You are operating inside the project at {root}.",
+        "Follow the repository's Codex-OS orchestration rules when they are relevant.",
+        "Keep outputs concise and execution-oriented.",
+    ]
+    if memory_mode == "auto":
+        parts.append("Prefer Claude Code native memory behavior from CLAUDE.md and project auto-memory.")
+    else:
+        parts.append("Do not rely on Claude Code auto-memory when deterministic project memory is provided explicitly.")
+    return "\n".join(parts)
+
+
+def run_claude(root: Path, prompt: str, system_append: str) -> tuple[int, str, str]:
+    claude_exe = resolve_claude_executable()
+    cmd = [
+        claude_exe,
+        "-p",
+        prompt,
+        "--add-dir",
+        str(root),
+        "--append-system-prompt",
+        system_append,
+    ]
+    proc = subprocess.run(cmd, cwd=root, text=True, capture_output=True)
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def execute_task(
+    root: Path,
+    parts: list[str],
+    dry_run: bool,
+    memory_mode: str,
+    context_arg: str | None,
+    share_arg: str | None,
+) -> int:
+    command, user_prompt, forced_mode = parse_mode_and_prompt(parts)
+    project_type = detect_project_type(root)
+
+    context_block = ""
+    context_source = ""
+    shared_block = ""
+    shared_source = ""
+    shared_file = ""
+    global_memory_block = ""
+    global_memory_used = False
+
+    if memory_mode == "deterministic":
+        update_memory_context(root, project_type)
+        context_block, context_source = load_context_summary(context_arg, root)
+        shared_block, shared_source, shared_file = create_or_update_shared_memory(share_arg, root)
+        global_memory_block, global_memory_used = load_global_memory_summary(memory_mode)
+
+    prepared_prompt = build_task_prompt(
+        user_prompt,
+        project_type,
+        forced_mode,
+        memory_mode,
+        context_block,
+        shared_block,
+        global_memory_block,
+    )
+    system_append = build_system_append(root, memory_mode)
+
+    if dry_run:
+        print(f"project_root={root}")
+        print(f"mode_command={command}")
+        print(f"forced_mode={forced_mode or 'auto'}")
+        print(f"project_type={project_type}")
+        print(f"memory_mode={memory_mode}")
+        print(f"context_source={context_source or 'none'}")
+        print(f"share_source={shared_source or 'none'}")
+        print(f"shared_memory_file={shared_file or 'none'}")
+        print(f"global_memory_loaded={'yes' if global_memory_used else 'no'}")
+        print("system_append=\n" + system_append)
+        print("prompt=\n" + prepared_prompt)
+        return 0
+
+    code, out, err = run_claude(root, prepared_prompt, system_append)
+    if out:
+        print(out, end="" if out.endswith("\n") else "\n")
+    if err:
+        print(err, file=sys.stderr, end="" if err.endswith("\n") else "\n")
+    return code
+
+
+def run_interactive(
+    root: Path,
+    dry_run: bool,
+    memory_mode: str,
+    context_arg: str | None,
+    share_arg: str | None,
+) -> int:
+    try:
+        import readline  # noqa: F401
+    except Exception:
+        pass
+
+    while True:
+        try:
+            line = input("ro-claude > ").strip()
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print()
+            continue
+
+        if not line:
+            continue
+
+        if line.lower() in {"exit", "quit"}:
+            return 0
+
+        try:
+            parts = shlex.split(line)
+        except ValueError as exc:
+            print(f"Input parse error: {exc}", file=sys.stderr)
+            continue
+
+        try:
+            execute_task(
+                root,
+                parts,
+                dry_run=dry_run,
+                memory_mode=memory_mode,
+                context_arg=context_arg,
+                share_arg=share_arg,
+            )
+        except SystemExit as exc:
+            if str(exc):
+                print(str(exc), file=sys.stderr)
+
+
+def main() -> int:
+    args = parse_args()
+    root = find_project_root(Path.cwd())
+    ensure_project_bootstrap(root, args.memory_mode)
+
+    if not args.parts:
+        return run_interactive(
+            root,
+            dry_run=args.dry_run,
+            memory_mode=args.memory_mode,
+            context_arg=args.context,
+            share_arg=args.share,
+        )
+
+    return execute_task(
+        root,
+        args.parts,
+        dry_run=args.dry_run,
+        memory_mode=args.memory_mode,
+        context_arg=args.context,
+        share_arg=args.share,
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

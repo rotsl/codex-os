@@ -1,0 +1,1333 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Codex-OS | Codex + Claude Workflows</title>
+    <meta
+      name="description"
+      content="Codex-OS frontend for backend-ready workflow execution with Codex and Claude support, secure BYOK flow, and persistent command history."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&family=Space+Mono:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg-1: #f3efe4;
+        --bg-2: #d7efe8;
+        --ink: #102127;
+        --muted: #3b575f;
+        --cyan: #11a7a2;
+        --orange: #ff7f3f;
+        --panel: rgba(255, 255, 255, 0.75);
+        --line: rgba(16, 33, 39, 0.14);
+        --good: #0a7f5f;
+        --bad: #ba3a30;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+
+      body {
+        min-height: 100vh;
+        color: var(--ink);
+        font-family: "Bricolage Grotesque", "Segoe UI", sans-serif;
+        background:
+          radial-gradient(1200px 700px at 85% 10%, #c6f2e8 0%, transparent 60%),
+          radial-gradient(900px 620px at 10% 100%, #ffe1be 0%, transparent 55%),
+          linear-gradient(165deg, var(--bg-1), var(--bg-2));
+        overflow-x: hidden;
+      }
+
+      .grid {
+        position: fixed;
+        inset: 0;
+        background-image:
+          linear-gradient(var(--line) 1px, transparent 1px),
+          linear-gradient(90deg, var(--line) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: radial-gradient(circle at center, black 28%, transparent 85%);
+        opacity: 0.45;
+        pointer-events: none;
+        animation: drift 22s linear infinite;
+      }
+
+      @keyframes drift {
+        from { transform: translate3d(0, 0, 0); }
+        to { transform: translate3d(42px, 42px, 0); }
+      }
+
+      .wrap {
+        width: min(1160px, 92vw);
+        margin: 0 auto;
+        padding: 2.2rem 0 3.2rem;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1.3rem;
+      }
+
+      .brand {
+        font-family: "Space Mono", monospace;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        font-size: 0.92rem;
+        text-transform: uppercase;
+        padding: 0.48rem 0.72rem;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.66);
+      }
+
+      .links {
+        display: flex;
+        gap: 0.7rem;
+        flex-wrap: wrap;
+      }
+
+      .links a {
+        color: var(--ink);
+        text-decoration: none;
+        font-size: 0.84rem;
+        font-weight: 600;
+        padding: 0.45rem 0.75rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.7);
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.15fr 0.85fr;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        background: var(--panel);
+        box-shadow: 0 18px 40px rgba(18, 44, 52, 0.12);
+        backdrop-filter: blur(6px);
+      }
+
+      .hero-copy {
+        padding: 1.8rem;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 6vw, 3.8rem);
+        line-height: 0.95;
+        letter-spacing: -0.03em;
+      }
+
+      .accent { color: var(--cyan); }
+
+      .copy {
+        margin-top: 0.9rem;
+        color: var(--muted);
+        font-size: 1.03rem;
+        line-height: 1.5;
+        max-width: 62ch;
+      }
+
+      .status {
+        margin-top: 1rem;
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      .chip {
+        font-family: "Space Mono", monospace;
+        font-size: 0.76rem;
+        padding: 0.35rem 0.56rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid var(--line);
+      }
+
+      .robot-stage {
+        padding: 1.3rem;
+        position: relative;
+        min-height: 300px;
+        display: grid;
+        place-items: center;
+      }
+
+      .pulse {
+        position: absolute;
+        width: 260px;
+        height: 260px;
+        border-radius: 50%;
+        border: 2px dashed rgba(17, 167, 162, 0.35);
+        animation: spin 12s linear infinite;
+      }
+
+      .pulse::after {
+        content: "";
+        position: absolute;
+        inset: -11px;
+        border-radius: 50%;
+        border: 2px dashed rgba(255, 127, 63, 0.24);
+        animation: spin 9s linear infinite reverse;
+      }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      .fleet {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(72px, 1fr));
+        gap: 0.9rem;
+        z-index: 2;
+      }
+
+      .bot {
+        width: 90px;
+        height: 120px;
+        position: relative;
+        animation: bob 2.4s ease-in-out infinite;
+      }
+
+      .bot:nth-child(2) { animation-delay: 0.3s; }
+      .bot:nth-child(3) { animation-delay: 0.6s; }
+
+      @keyframes bob {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-10px); }
+      }
+
+      .head {
+        width: 70px;
+        height: 48px;
+        background: #fefefe;
+        border: 2px solid #17343c;
+        border-radius: 16px;
+        margin: 0 auto;
+        position: relative;
+      }
+
+      .antenna {
+        position: absolute;
+        top: -16px;
+        left: 50%;
+        width: 2px;
+        height: 14px;
+        background: #17343c;
+        transform: translateX(-50%);
+      }
+
+      .antenna::after {
+        content: "";
+        position: absolute;
+        top: -6px;
+        left: -4px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--orange);
+        animation: blink 1.4s steps(1) infinite;
+      }
+
+      .eyes {
+        position: absolute;
+        top: 17px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 10px;
+      }
+
+      .eye {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--cyan);
+        box-shadow: 0 0 0 4px rgba(17, 167, 162, 0.14);
+        animation: eyePulse 1.8s infinite;
+      }
+
+      .eye:nth-child(2) { animation-delay: 0.2s; }
+
+      @keyframes blink {
+        0%, 74%, 100% { opacity: 1; }
+        75%, 82% { opacity: 0.2; }
+      }
+
+      @keyframes eyePulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.15); }
+      }
+
+      .body {
+        width: 80px;
+        height: 62px;
+        background: #ffffff;
+        border: 2px solid #17343c;
+        border-radius: 16px;
+        margin: 4px auto 0;
+        position: relative;
+      }
+
+      .core {
+        position: absolute;
+        inset: 16px 23px;
+        border-radius: 999px;
+        background: linear-gradient(120deg, var(--cyan), #56d4bf);
+        animation: core 1.9s ease-in-out infinite;
+      }
+
+      @keyframes core {
+        0%, 100% { opacity: 0.65; transform: scale(0.95); }
+        50% { opacity: 1; transform: scale(1.03); }
+      }
+
+      .arm {
+        position: absolute;
+        top: 22px;
+        width: 14px;
+        height: 2px;
+        background: #17343c;
+      }
+
+      .arm.left { left: -12px; transform-origin: right center; animation: armL 1.6s ease-in-out infinite; }
+      .arm.right { right: -12px; transform-origin: left center; animation: armR 1.6s ease-in-out infinite; }
+
+      @keyframes armL {
+        0%, 100% { transform: rotate(-14deg); }
+        50% { transform: rotate(14deg); }
+      }
+
+      @keyframes armR {
+        0%, 100% { transform: rotate(14deg); }
+        50% { transform: rotate(-14deg); }
+      }
+
+      .app {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+      }
+
+      .form, .output {
+        padding: 1.1rem;
+      }
+
+      .row {
+        display: grid;
+        gap: 0.36rem;
+        margin-bottom: 0.72rem;
+      }
+
+      .two {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.7rem;
+      }
+
+      label {
+        font-size: 0.83rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      input, select, textarea, button {
+        font: inherit;
+      }
+
+      input, select, textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.84);
+        padding: 0.7rem 0.8rem;
+        color: var(--ink);
+      }
+
+      textarea {
+        min-height: 140px;
+        resize: vertical;
+      }
+
+      .actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 1px solid transparent;
+        border-radius: 12px;
+        padding: 0.6rem 0.9rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: var(--ink);
+        color: #f7fffd;
+      }
+
+      .muted {
+        background: rgba(255, 255, 255, 0.8);
+        border-color: var(--line);
+        color: var(--ink);
+      }
+
+      .state-badge {
+        display: inline-block;
+        padding: 0.3rem 0.55rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.76);
+        font-family: "Space Mono", monospace;
+        font-size: 0.76rem;
+      }
+
+      .hint {
+        margin-top: 0.4rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+
+      pre {
+        margin: 0;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.85);
+        border-radius: 12px;
+        padding: 0.85rem;
+        max-height: 320px;
+        overflow: auto;
+        font-family: "Space Mono", monospace;
+        font-size: 0.76rem;
+        line-height: 1.45;
+      }
+
+      .log {
+        margin-top: 0.75rem;
+        font-size: 0.84rem;
+      }
+
+      .rich-view {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.85);
+        border-radius: 12px;
+        padding: 0.85rem;
+        max-height: 320px;
+        overflow: auto;
+        display: grid;
+        gap: 0.55rem;
+      }
+
+      .terminal-view {
+        border: 1px solid rgba(0, 255, 156, 0.22);
+        background: #0b0f14;
+        color: #d7ffec;
+        border-radius: 12px;
+        padding: 0.75rem;
+        max-height: 340px;
+        overflow: auto;
+        display: grid;
+        gap: 0.5rem;
+      }
+
+      .terminal-entry {
+        border-left: 3px solid rgba(17, 167, 162, 0.7);
+        padding: 0.45rem 0.6rem;
+        border-radius: 8px;
+        background: rgba(13, 20, 28, 0.85);
+      }
+
+      .terminal-entry pre,
+      .terminal-entry code {
+        background: #0f1720;
+        color: #d7ffec;
+      }
+
+      .terminal-entry p,
+      .terminal-entry li,
+      .terminal-entry h4 {
+        color: #d7ffec;
+      }
+
+      .rich-markdown p,
+      .rich-markdown ul,
+      .rich-markdown h4 {
+        margin: 0.35rem 0;
+      }
+
+      .rich-code {
+        margin: 0;
+        border: 1px solid var(--line);
+        background: rgba(14, 24, 32, 0.96);
+        color: #e8fff5;
+        border-radius: 10px;
+        padding: 0.7rem;
+        overflow: auto;
+        font-family: "Space Mono", monospace;
+        font-size: 0.76rem;
+      }
+
+      .csv-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.78rem;
+      }
+
+      .csv-table th,
+      .csv-table td {
+        border: 1px solid var(--line);
+        padding: 0.35rem 0.45rem;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .csv-table th {
+        background: rgba(17, 167, 162, 0.12);
+      }
+
+      .empty-note {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .plain-text {
+        white-space: pre-wrap;
+        line-height: 1.5;
+        font-size: 0.9rem;
+      }
+
+      .artifact {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.9);
+        overflow: hidden;
+      }
+
+      .artifact-header {
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.42rem 0.55rem;
+        border-bottom: 1px solid var(--line);
+        background: rgba(17, 167, 162, 0.08);
+      }
+
+      .artifact-kind {
+        font-family: "Space Mono", monospace;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 0.08rem 0.35rem;
+        border-radius: 999px;
+        background: rgba(16, 33, 39, 0.12);
+      }
+
+      .artifact-title {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+
+      .artifact-body {
+        padding: 0.55rem;
+      }
+
+      .terminal-entry .artifact {
+        border-color: rgba(0, 255, 156, 0.22);
+        background: rgba(10, 16, 24, 0.92);
+      }
+
+      .terminal-entry .artifact-header {
+        border-bottom-color: rgba(0, 255, 156, 0.22);
+        background: rgba(8, 14, 22, 0.95);
+      }
+
+      .terminal-entry .artifact-kind {
+        color: #b8ffe3;
+        background: rgba(0, 255, 156, 0.12);
+      }
+
+      .terminal-entry .artifact-title,
+      .terminal-entry .plain-text {
+        color: #d7ffec;
+      }
+
+      .ok { color: var(--good); }
+      .err { color: var(--bad); }
+
+      .site-footer {
+        width: min(1120px, 92vw);
+        margin: 1.2rem auto 2rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        text-align: center;
+      }
+
+      .site-footer h3 {
+        margin: 0 0 0.25rem 0;
+        font-size: 1.05rem;
+      }
+
+      .site-footer p {
+        margin: 0.28rem 0;
+      }
+
+      .site-footer a {
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .site-footer code {
+        font-family: "Space Mono", monospace;
+      }
+
+      .site-footer sub {
+        color: var(--muted);
+      }
+
+
+      @media (max-width: 980px) {
+        .hero { grid-template-columns: 1fr; }
+        .app { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="grid" aria-hidden="true"></div>
+
+    <main class="wrap">
+      <header class="topbar">
+        <div class="brand">Codex-OS</div>
+        <nav class="links" aria-label="Quick links">
+          <a href="https://github.com/rotsl/codex-os" target="_blank" rel="noreferrer">GitHub</a>
+          <a href="https://www.npmjs.com/package/codexospackage" target="_blank" rel="noreferrer">npm</a>
+        </nav>
+      </header>
+
+      <section class="hero">
+        <article class="panel hero-copy">
+          <h1>
+            Backend-ready <span class="accent">Codex-OS</span><br />
+            for Codex and Claude.
+          </h1>
+          <p class="copy">
+            This frontend calls an external backend service for secure BYOK, server-enforced workflow transitions,
+            and persistent project history while the repo itself now supports both Codex and Claude CLI workflows.
+            API keys are submitted to backend storage only; they are never persisted by this page.
+          </p>
+          <div class="status">
+            <span class="chip">states: IDEA→PLAN→SPEC→TASKS→EXEC→ANALYZE</span>
+            <span class="chip">BYOK: encrypted server-side</span>
+            <span class="chip">storage: persistent</span>
+            <span class="chip">wrappers: ro + ro-claude</span>
+          </div>
+        </article>
+
+        <aside class="panel robot-stage" aria-label="Animated robot fleet">
+          <div class="pulse" aria-hidden="true"></div>
+          <div class="fleet">
+            <div class="bot">
+              <div class="head">
+                <div class="antenna"></div>
+                <div class="eyes"><span class="eye"></span><span class="eye"></span></div>
+              </div>
+              <div class="body"><div class="arm left"></div><div class="arm right"></div><div class="core"></div></div>
+            </div>
+            <div class="bot">
+              <div class="head">
+                <div class="antenna"></div>
+                <div class="eyes"><span class="eye"></span><span class="eye"></span></div>
+              </div>
+              <div class="body"><div class="arm left"></div><div class="arm right"></div><div class="core"></div></div>
+            </div>
+            <div class="bot">
+              <div class="head">
+                <div class="antenna"></div>
+                <div class="eyes"><span class="eye"></span><span class="eye"></span></div>
+              </div>
+              <div class="body"><div class="arm left"></div><div class="arm right"></div><div class="core"></div></div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="app">
+        <article class="panel form">
+          <div class="row">
+            <label for="sessionToken">Session Token (MVP)</label>
+            <input id="sessionToken" placeholder="optional bearer token" />
+          </div>
+
+          <div class="hint">
+            <strong>Session Token:</strong><br>
+            Identifies your session with the backend.<br>
+            Used to track projects and secure requests.<br>
+            Optional in MVP.
+          </div>
+
+          <input id="projectId" type="hidden" />
+
+          <div class="row">
+            <label for="projectName">Project Name</label>
+            <input id="projectName" placeholder="My Project" />
+          </div>
+
+          <div class="row">
+            <label for="apiKey">API Key (Selected Provider)</label>
+            <input id="apiKey" type="password" autocomplete="off" placeholder="sk-..." />
+            <div class="hint">Sent once to backend for encryption at rest. This page does not store it.</div>
+          </div>
+
+          <div class="two">
+            <div class="row">
+              <label for="provider">AI Provider</label>
+              <select id="provider">
+                <option value="openai">OpenAI</option>
+                <option value="claude">Claude (Anthropic)</option>
+              </select>
+            </div>
+            <div class="row">
+              <label for="model">Model</label>
+              <select id="model">
+                <option value="gpt-4o" data-provider="openai">GPT-4o</option>
+                <option value="gpt-4o-mini" data-provider="openai">GPT-4o Mini</option>
+                <option value="claude-3-sonnet-20240229" data-provider="claude">Claude Sonnet</option>
+                <option value="claude-3-haiku-20240307" data-provider="claude">Claude Haiku</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button class="muted" id="btnUpsert" type="button" title="Create or update the current project">💾 Save Project</button>
+            <button class="muted" id="btnNewProject" type="button" title="Generate a new valid project UUID">New Project</button>
+          </div>
+          <div class="hint">Enter API key, choose provider/model, then run command.</div>
+
+          <hr style="border:0;border-top:1px solid var(--line);margin:1rem 0;" />
+
+          <div class="two">
+            <div class="row">
+              <label for="command">Command</label>
+              <select id="command">
+                <option value="/co-plan">/co-plan</option>
+                <option value="/co-create-spec">/co-create-spec</option>
+                <option value="/co-exec-tasks">/co-exec-tasks</option>
+                <option value="/co-analyze">/co-analyze</option>
+              </select>
+            </div>
+            <div class="row">
+              <label>Workflow State</label>
+              <span class="state-badge" id="stateLabel">unknown</span>
+            </div>
+          </div>
+
+          <div class="hint">
+            <strong>Commands:</strong><br>
+            /co-plan → Generate a plan from idea<br>
+            /co-create-spec → Create detailed specification<br>
+            /co-exec-tasks → Execute tasks step-by-step<br>
+            /co-analyze → Analyze results or improve output
+          </div>
+
+          <div class="hint">
+            <strong>Workflow State:</strong><br>
+            IDEA → PLAN → SPEC → TASKS → EXEC → ANALYZE<br>
+            Each command moves the project forward in this pipeline.
+          </div>
+
+          <div class="row">
+            <label for="inputText">Input</label>
+            <textarea id="inputText" placeholder="Describe what you want Codex-OS backend to do..."></textarea>
+          </div>
+
+          <div class="actions">
+            <button class="primary" id="btnExecute" type="button" title="Run the selected command for this project" disabled>▶️ Run Command</button>
+            <button class="muted" id="btnRefresh" type="button" title="Reload project state and command history">🔄 Refresh Status</button>
+            <button class="muted" id="btnClear" type="button" title="Clear terminal output">Clear Terminal</button>
+          </div>
+          <div class="hint">Set project and API key before running commands.</div>
+
+          <p class="log" id="log"></p>
+        </article>
+
+        <article class="panel output">
+          <h3 style="margin:0 0 0.6rem 0;">Latest Response</h3>
+          <div id="result" class="rich-view"></div>
+
+          <h3 style="margin:1rem 0 0.6rem 0;">Agent Terminal</h3>
+          <div id="terminal" class="terminal-view"></div>
+
+          <h3 style="margin:1rem 0 0.6rem 0;">Recent Commands</h3>
+          <pre id="history">[]</pre>
+        </article>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <h3>Codex-OS</h3>
+      <p><code>autoload • memory • plugins • repeatable workflows</code></p>
+      <p>
+        <a href="https://rotsl.github.io/codex-os/" target="_blank" rel="noreferrer">Live Site</a>
+        ·
+        <a href="https://github.com/rotsl/codex-os" target="_blank" rel="noreferrer">GitHub</a>
+        ·
+        <a href="https://www.npmjs.com/package/codexospackage" target="_blank" rel="noreferrer">npm</a>
+      </p>
+      <sub>Built for terminal, VS Code, Codex chat, and Claude Code.</sub>
+    </footer>
+
+    <script>
+      const stateLabel = document.getElementById("stateLabel");
+      const resultEl = document.getElementById("result");
+      const historyEl = document.getElementById("history");
+      const logEl = document.getElementById("log");
+      const executeButton = document.getElementById("btnExecute");
+      const providerEl = document.getElementById("provider");
+      const modelEl = document.getElementById("model");
+
+      const fields = {
+        sessionToken: document.getElementById("sessionToken"),
+        projectId: document.getElementById("projectId"),
+        projectName: document.getElementById("projectName"),
+        apiKey: document.getElementById("apiKey"),
+        command: document.getElementById("command"),
+        inputText: document.getElementById("inputText")
+      };
+
+      const BACKEND_PLACEHOLDER = "__BACKEND" + "_BASE_URL__";
+      const DEFAULT_API = "__BACKEND_BASE_URL__";
+
+      function normalizeBaseUrl() {
+        const queryApi = new URLSearchParams(window.location.search).get("api");
+        const configured = (queryApi || DEFAULT_API || "").trim();
+
+        if (!configured || configured === BACKEND_PLACEHOLDER) {
+          throw new Error("Backend base URL is not configured.");
+        }
+
+        return configured.replace(/\/+$/, "");
+      }
+
+      function generateUUID() {
+        return crypto.randomUUID();
+      }
+
+      function buildHeaders() {
+        const headers = { "Content-Type": "application/json" };
+        const token = fields.sessionToken.value.trim();
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        return headers;
+      }
+
+      function setLog(msg, kind = "ok") {
+        logEl.className = `log ${kind}`;
+        logEl.textContent = msg;
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }
+
+      function tryParseJson(text) {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      }
+
+      async function readJsonResponse(res) {
+        const rawText = await res.text();
+        const contentType = (res.headers.get("content-type") || "").toLowerCase();
+        const parsed = tryParseJson(rawText);
+
+        if (parsed !== null) {
+          return parsed;
+        }
+
+        if (contentType.includes("text/html") || rawText.trim().startsWith("<")) {
+          const titleMatch = rawText.match(/<title>(.*?)<\/title>/i);
+          const title = titleMatch ? ` ${titleMatch[1]}` : "";
+          throw new Error(`Backend returned HTML instead of JSON.${title}`.trim());
+        }
+
+        if (!rawText.trim()) {
+          return {};
+        }
+
+        throw new Error("Backend returned invalid JSON.");
+      }
+
+      function parseCsvRow(line) {
+        const out = [];
+        let current = "";
+        let inQuotes = false;
+
+        for (let i = 0; i < line.length; i += 1) {
+          const ch = line[i];
+          if (ch === '"') {
+            if (inQuotes && line[i + 1] === '"') {
+              current += '"';
+              i += 1;
+            } else {
+              inQuotes = !inQuotes;
+            }
+            continue;
+          }
+          if (ch === "," && !inQuotes) {
+            out.push(current.trim());
+            current = "";
+            continue;
+          }
+          current += ch;
+        }
+
+        out.push(current.trim());
+        return out;
+      }
+
+      function isLikelyCsv(text) {
+        const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (lines.length < 2) return false;
+        if (!lines.every((line) => line.includes(","))) return false;
+        const widths = lines.map((line) => parseCsvRow(line).length);
+        return widths[0] > 1 && widths.every((w) => w === widths[0]);
+      }
+
+      function renderCsvTable(text) {
+        const rows = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(parseCsvRow);
+        if (!rows.length) return '<div class="empty-note">No CSV rows</div>';
+
+        const [header, ...body] = rows;
+        const headHtml = header.map((cell) => '<th>' + escapeHtml(cell) + '</th>').join("");
+        const bodyHtml = body.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("");
+        return '<table class="csv-table"><thead><tr>' + headHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody></table>';
+      }
+
+      function renderPlainTextAsMarkdown(text) {
+        const lines = text.split(/\r?\n/);
+        let html = "";
+        let inList = false;
+
+        const closeList = () => {
+          if (inList) {
+            html += "</ul>";
+            inList = false;
+          }
+        };
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line) {
+            closeList();
+            continue;
+          }
+
+          const headingMatch = line.match(/^(#{1,4})\s+(.*)$/);
+          if (headingMatch) {
+            closeList();
+            html += '<h4>' + escapeHtml(headingMatch[2]) + '</h4>';
+            continue;
+          }
+
+          const bulletMatch = line.match(/^[-*•]\s+(.*)$/);
+          if (bulletMatch) {
+            if (!inList) {
+              html += "<ul>";
+              inList = true;
+            }
+            html += '<li>' + escapeHtml(bulletMatch[1]) + '</li>';
+            continue;
+          }
+
+          closeList();
+          html += '<p>' + escapeHtml(line) + '</p>';
+        }
+
+        closeList();
+        return html || '<div class="empty-note">No text</div>';
+      }
+
+      function renderMarkdownWithCodeFences(text) {
+        const fenceRegex = /```([a-zA-Z0-9_-]+)?\n([\s\S]*?)```/g;
+        let html = "";
+        let last = 0;
+        let match;
+
+        while ((match = fenceRegex.exec(text)) !== null) {
+          const before = text.slice(last, match.index);
+          if (before.trim()) {
+            html += '<div class="rich-markdown">' + renderPlainTextAsMarkdown(before) + '</div>';
+          }
+
+          html += '<pre class="rich-code"><code>' + escapeHtml(match[2]) + '</code></pre>';
+          last = match.index + match[0].length;
+        }
+
+        const after = text.slice(last);
+        if (after.trim()) {
+          html += '<div class="rich-markdown">' + renderPlainTextAsMarkdown(after) + '</div>';
+        }
+
+        return html || '<div class="empty-note">No content</div>';
+      }
+
+      function isLikelyMarkdownTable(text) {
+        const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (lines.length < 2) return false;
+        return /\|/.test(lines[0]) && /^\|?\s*[:-|\s]+$/.test(lines[1]);
+      }
+
+      function parseMarkdownTable(text) {
+        const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+        if (lines.length < 2) return null;
+        const splitCells = (line) => line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+        const header = splitCells(lines[0]);
+        const body = lines.slice(2).map(splitCells);
+        return { header, body };
+      }
+
+      function renderMarkdownTable(text) {
+        const parsed = parseMarkdownTable(text);
+        if (!parsed) return '<div class="empty-note">No table rows</div>';
+        const headHtml = parsed.header.map((cell) => '<th>' + escapeHtml(cell) + '</th>').join("");
+        const bodyHtml = parsed.body.map((row) => '<tr>' + row.map((cell) => '<td>' + escapeHtml(cell) + '</td>').join("") + '</tr>').join("");
+        return '<table class="csv-table"><thead><tr>' + headHtml + '</tr></thead><tbody>' + bodyHtml + '</tbody></table>';
+      }
+
+      function looksLikeCode(text) {
+        const codeSignals = [
+          /^\s*(def|class|import|from)\s+/m,
+          /^\s*(function|const|let|var)\s+/m,
+          /^\s*(SELECT|WITH|INSERT|UPDATE|CREATE\s+TABLE)\s+/im,
+          /[{};]{2,}/,
+          /<\/?[A-Za-z][^>]*>/
+        ];
+        return codeSignals.some((re) => re.test(text));
+      }
+
+      function looksLikeMarkdown(text) {
+        return /^(#{1,6})\s+/m.test(text)
+          || /^[-*]\s+/m.test(text)
+          || /^\d+\.\s+/m.test(text)
+          || /\[[^\]]+\]\([^\)]+\)/.test(text);
+      }
+
+      function renderPlainText(text) {
+        return '<div class="plain-text">' + escapeHtml(text) + '</div>';
+      }
+
+      function renderArtifact(kind, title, bodyHtml) {
+        return '<section class="artifact artifact-' + kind + '">' +
+          '<div class="artifact-header">' +
+          '<span class="artifact-kind">' + escapeHtml(kind) + '</span>' +
+          '<span class="artifact-title">' + escapeHtml(title) + '</span>' +
+          '</div>' +
+          '<div class="artifact-body">' + bodyHtml + '</div>' +
+          '</section>';
+      }
+
+      function renderRichContent(value) {
+        if (value == null || value === "") {
+          return '<div class="empty-note">No output returned</div>';
+        }
+
+        if (typeof value === "object") {
+          const body = '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(value, null, 2)) + '</code></pre>';
+          return renderArtifact('json', 'JSON artifact', body);
+        }
+
+        const text = String(value).trim();
+        if (!text) {
+          return '<div class="empty-note">No output returned</div>';
+        }
+
+        if ((text.startsWith("{") || text.startsWith("[")) && tryParseJson(text) !== null) {
+          const jsonObj = tryParseJson(text);
+          const body = '<pre class="rich-code"><code>' + escapeHtml(JSON.stringify(jsonObj, null, 2)) + '</code></pre>';
+          return renderArtifact('json', 'JSON artifact', body);
+        }
+
+        if (isLikelyCsv(text)) {
+          return renderArtifact('table', 'CSV table artifact', renderCsvTable(text));
+        }
+
+        if (isLikelyMarkdownTable(text)) {
+          return renderArtifact('table', 'Markdown table artifact', renderMarkdownTable(text));
+        }
+
+        if (/```[\s\S]*```/.test(text)) {
+          return renderArtifact('code', 'Code/Markdown artifact', renderMarkdownWithCodeFences(text));
+        }
+
+        if (looksLikeCode(text)) {
+          const body = '<pre class="rich-code"><code>' + escapeHtml(text) + '</code></pre>';
+          return renderArtifact('code', 'Code artifact', body);
+        }
+
+        if (looksLikeMarkdown(text)) {
+          return renderArtifact('markdown', 'Markdown artifact', '<div class="rich-markdown">' + renderPlainTextAsMarkdown(text) + '</div>');
+        }
+
+        return renderPlainText(text);
+      }
+
+      function setResultContent(content) {
+        if (!resultEl) return;
+        resultEl.innerHTML = renderRichContent(content);
+      }
+
+      function logTerminal(msg) {
+        const el = document.getElementById("terminal");
+        if (!el) return;
+
+        const entry = document.createElement("div");
+        entry.className = "terminal-entry";
+        entry.innerHTML = renderRichContent(msg);
+        el.appendChild(entry);
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function logError(msg) {
+        logTerminal("✖ " + msg);
+      }
+
+      function logSuccess(msg) {
+        logTerminal("✔ " + msg);
+      }
+
+      function pretty(obj) {
+        return JSON.stringify(obj, null, 2);
+      }
+
+      function sanitizeInput(text) {
+        return text.replace(/<script/gi, "").replace(/```/g, "").trim();
+      }
+
+      function filterModelsByProvider() {
+        const provider = providerEl.value;
+
+        [...modelEl.options].forEach((opt) => {
+          opt.hidden = opt.dataset.provider !== provider;
+        });
+
+        const firstVisible = [...modelEl.options].find((opt) => opt.dataset.provider === provider);
+        if (firstVisible) {
+          modelEl.value = firstVisible.value;
+        }
+      }
+
+      function getProvider() {
+        return document.getElementById("provider").value;
+      }
+
+      function getModel() {
+        return document.getElementById("model").value;
+      }
+
+      async function api(path, method = "GET", body = null) {
+        const url = `${normalizeBaseUrl()}${path}`;
+
+        logTerminal(`→ ${method} ${path}`);
+
+        const res = await fetch(url, {
+          method,
+          headers: buildHeaders(),
+          body: body ? JSON.stringify(body) : null
+        });
+
+        const data = await readJsonResponse(res).catch((error) => {
+          logTerminal(`✖ ERROR: ${error.message}`);
+          throw error;
+        });
+
+        if (!res.ok) {
+          const msg = data.error || data.detail || res.status;
+          logTerminal(`✖ ERROR: ${msg}`);
+          throw new Error(data.error || data.detail || "Request failed");
+        }
+
+        logTerminal("✔ response received");
+        return data;
+      }
+
+      async function upsertProject() {
+        let projectId = fields.projectId.value.trim();
+        const projectName = fields.projectName.value.trim();
+        if (!projectId || !projectName) {
+          throw new Error("projectId and projectName are required.");
+        }
+
+        const data = await api("/projects/upsert", "POST", {
+          projectId,
+          name: projectName
+        });
+
+        fields.projectId.value = data.projectId || data.id || projectId;
+        updateExecuteButtonState();
+
+        stateLabel.textContent = data.state || "IDEA";
+        setLog("Project saved.");
+      }
+
+      async function refreshProject() {
+        const projectId = fields.projectId.value.trim();
+        if (!projectId) {
+          throw new Error("projectId is required.");
+        }
+
+        logTerminal("↻ refreshing project...");
+
+        const project = await api(`/projects/${encodeURIComponent(projectId)}`);
+        const history = await api(`/projects/${encodeURIComponent(projectId)}/commands?limit=20`);
+
+        stateLabel.textContent = project.state || "unknown";
+
+        const normalizedItems = (history.items || []).map((item) => {
+          let parsedOutput = item.output;
+          if (typeof item.output === "string") {
+            try {
+              parsedOutput = JSON.parse(item.output);
+            } catch {}
+          }
+          return { ...item, output: parsedOutput };
+        });
+
+        historyEl.textContent = JSON.stringify(normalizedItems, null, 2);
+        logTerminal(`state → ${project.state}`);
+        logTerminal(`commands loaded: ${(history.items || []).length}`);
+        setLog("Project state refreshed.");
+      }
+
+      async function executeCommand() {
+        const url = normalizeBaseUrl() + "/execute";
+        const input = fields.inputText.value;
+
+        logTerminal("=== EXECUTE " + fields.command.value + " ===");
+
+        const res = await fetch(url, {
+          method: "POST",
+          headers: buildHeaders(),
+          body: JSON.stringify({
+            projectId: fields.projectId.value,
+            command: fields.command.value,
+            input,
+            apiKey: document.getElementById("apiKey").value,
+            provider: getProvider(),
+            model: getModel()
+          })
+        });
+
+        const data = await readJsonResponse(res);
+
+        logTerminal("RAW RESPONSE:");
+        logTerminal(data);
+        logTerminal("✔ response received");
+
+        if (data.error) {
+          logTerminal("✖ BACKEND ERROR:");
+          logTerminal(data);
+          setResultContent("⚠️ " + data.error);
+          return;
+        }
+
+        const parsed = typeof data.response === "string"
+          ? (tryParseJson(data.response) || { output: data.response })
+          : (data.response && typeof data.response === "object" ? data.response : data);
+
+        const steps = parsed.steps || data.steps || [];
+        if (steps.length) {
+          logTerminal("--- STEPS ---");
+          steps.forEach((step) => {
+            logTerminal("• " + step);
+          });
+        }
+
+        const state = parsed.state || data.state;
+        if (state) {
+          logTerminal("STATE → " + state);
+        }
+
+        const finalOutput = parsed.final || parsed.output || data.final || data.output || "";
+
+        if (!finalOutput) {
+          logTerminal("✖ No final/output field found in backend response");
+          logTerminal(parsed);
+          setResultContent("⚠️ No output returned");
+          stateLabel.textContent = state || "UNKNOWN";
+          return;
+        }
+
+        if (finalOutput.trim() === input.trim()) {
+          logTerminal("⚠ Echo-like output detected");
+        }
+
+        logTerminal("FINAL OUTPUT:");
+        logTerminal(finalOutput);
+
+        setResultContent(finalOutput);
+        stateLabel.textContent = state || "UNKNOWN";
+      }
+
+      function updateExecuteButtonState() {
+        const ready = fields.projectId.value.trim() && fields.apiKey.value.trim();
+        executeButton.disabled = !ready;
+      }
+
+      async function run(handler) {
+        setLog("Working...", "ok");
+        try {
+          await handler();
+        } catch (err) {
+          setLog(err.message || "Request failed.", "err");
+        }
+      }
+
+      window.addEventListener("DOMContentLoaded", () => {
+        if (!fields.projectId.value) {
+          fields.projectId.value = generateUUID();
+        }
+        setResultContent({ status: "idle" });
+        updateExecuteButtonState();
+      });
+
+      document.getElementById("btnUpsert").addEventListener("click", () => run(upsertProject));
+      document.getElementById("btnNewProject").addEventListener("click", () => {
+        fields.projectId.value = generateUUID();
+        updateExecuteButtonState();
+      });
+      document.getElementById("btnExecute").addEventListener("click", () => run(executeCommand));
+      document.getElementById("btnRefresh").addEventListener("click", () => run(refreshProject));
+      document.getElementById("btnClear").onclick = () => {
+        const terminal = document.getElementById("terminal");
+        if (terminal) terminal.innerHTML = "";
+      };
+
+      providerEl.addEventListener("change", filterModelsByProvider);
+      filterModelsByProvider();
+
+      fields.projectId.addEventListener("input", updateExecuteButtonState);
+      fields.apiKey.addEventListener("input", updateExecuteButtonState);
+      updateExecuteButtonState();
+    </script>
+  </body>
+</html>
